@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>白姐 · 17层手偶</title>
+<style>
+  img { -webkit-user-drag: none; user-drag: none; }
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:transparent;
+               -webkit-user-select:none; user-select:none; }
+  #stage { position:relative; width:100%; height:100%; }
+  .layer { position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+           pointer-events:none; will-change:transform; transform-origin:50% 50%; }
+
+  /* 整个人从脚底缩放：呼吸时脖子不会被压短 */
+  #figure { position:absolute; inset:0; transform-origin: 56.7% 99.5%; will-change:transform; }
+
+  #back-hair { transform-origin: 56.7% 20%; }
+  #body { position:absolute; inset:0; transform-origin: 56.7% 99.5%; will-change:transform; }
+  #head { position:absolute; inset:0; transform-origin: 56.7% 16%; will-change:transform; }
+  #tilt { position:absolute; inset:0; will-change:transform; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="tilt">
+      <div id="figure">
+        <img draggable="false" id="back-hair" class="layer" src="layers-v3/back_hair.png" alt="" />
+        <div id="body">
+          <img draggable="false" class="layer" src="layers-v3/neck.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/legwear.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/footwear.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/bottomwear.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/topwear.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/handwear.png" alt="" />
+        </div>
+        <div id="head">
+          <img draggable="false" class="layer" src="layers-v3/ears.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/face.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/eyebrow.png" alt="" />
+          <img draggable="false" id="eyewhite" class="layer" src="layers-v3/eyewhite.png" alt="" />
+          <img draggable="false" id="irides" class="layer" src="layers-v3/irides.png" alt="" />
+          <img draggable="false" id="eyelash" class="layer" src="layers-v3/eyelash_top.png" alt="" />
+          <img draggable="false" id="eyelash-bot" class="layer" src="layers-v3/eyelash_bot.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/nose.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/mouth.png" alt="" />
+          <img draggable="false" class="layer" src="layers-v3/front_hair.png" alt="" />
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="renderer2.js"></script>
+</body>
+</html>

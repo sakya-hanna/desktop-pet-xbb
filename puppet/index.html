@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>白姐 · 分层桌宠</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: transparent;
+    -webkit-user-select: none; user-select: none;
+  }
+  #stage { position: relative; width: 100%; height: 100%; }
+  .layer {
+    position: absolute; left: 0; top: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    will-change: transform;
+    transform-origin: 50% 50%;
+  }
+  #tilt { position: absolute; inset: 0; will-change: transform; }
+  /* 头组：脸 + 前发 + 帽子 挂在同一个支点上，整体转动，永不分离 */
+  #head {
+    position: absolute; inset: 0;
+    transform-origin: 50% 45%;   /* 脖子位置 */
+    will-change: transform;
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="tilt">
+      <img id="back-hair" class="layer" src="layers/back-hair.png" alt="" />
+      <img id="body" class="layer" src="layers/body.png" alt="" />
+      <div id="head">
+        <img id="face" class="layer" src="layers/face-open.png" alt="" />
+        <img id="front-hair" class="layer" src="layers/front-hair.png" alt="" />
+        <img id="hat" class="layer" src="layers/hat.png" alt="" />
+      </div>
+    </div>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
