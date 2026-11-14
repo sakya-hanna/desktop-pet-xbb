@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>和白姐聊天</title><link rel="stylesheet" href="chat.css"><script src="chat.js" defer></script></head>
+<body>
+<!-- Local conversation UI: silver / ice blue, one spacing and radius system. -->
+<header class="chat-header">
+  <div class="identity"><img class="header-avatar" src="assets/chat/baijie-avatar.png" width="48" height="48" alt=""><div><h1>小伯白</h1><p class="subtitle">白姐 · 和你慢慢聊</p></div></div>
+  <button id="clear" type="button">清空记录</button>
+  <p id="model-state">正在读取本机设置…</p>
+</header>
+<main class="conversation">
+  <div id="messages" role="log" aria-label="聊天记录" aria-live="polite" tabindex="0"></div>
+  <p id="empty-state" hidden>想说什么都可以，从今天的小事聊起吧。</p>
+</main>
+<footer><p id="status" role="status">正在读取本机记录…</p><form id="composer"><label for="message-input">想说些什么？</label><textarea id="message-input" rows="1" placeholder="在这里输入…" aria-describedby="count"></textarea><div class="compose-actions"><span id="count">0 / 4000 · Shift+Enter 换行</span><button id="cancel" type="button" disabled>取消</button><button id="send" type="submit" disabled>保存消息</button></div></form></footer>
+<dialog id="clear-dialog" aria-labelledby="clear-title"><h2 id="clear-title">清空聊天记录？</h2><p>本机保存的记录会被删除，无法恢复。</p><div class="dialog-actions"><button id="clear-cancel" type="button" autofocus>保留记录</button><button id="clear-confirm" type="button">确认清空</button></div></dialog>
+</body></html>

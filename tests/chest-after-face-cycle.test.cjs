@@ -1,0 +1,31 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {createHarness}=require('./helpers/interaction-fixtures.cjs');
+test('ordinary face click must not disable the next chest surprise and shy response',async t=>{
+ const h=await createHarness({idle:false});t.after(()=>h.runtime.destroy());h.runtime.start();h.tick(2);
+ let p;
+ for(let y=290;y<650&&!p;y+=10)for(let x=260;x<350;x+=10){const q=h.css([x,y]),hit=h.renderer.hitPart(q.clientX,q.clientY);if(hit&&hit.partId===null&&h.renderer.hitOpaque(q.clientX,q.clientY)){p=q;break;}}
+ assert.ok(p,'find real unassigned opaque body pixel');
+ const before=h.runtime.status().renderedFace;
+ h.emit(h.canvas,'pointerdown',p);assert.equal(h.runtime.status().pointerKind,'face');h.emit(h.win,'pointerup',{...p,buttons:0});h.tick(15);
+ assert.notEqual(h.runtime.status().renderedFace,before,'ordinary click changes face');
+ p=h.css([295,222]);assert.equal(h.renderer.hitPart(p.clientX,p.clientY).partId,'chest');
+ h.emit(h.canvas,'pointerdown',p);h.emit(h.win,'pointerup',{...p,buttons:0});h.tick();
+ assert.equal(h.runtime.status().motion.expression.face,'3563','director receives chest click');
+ assert.equal(h.runtime.status().renderedFace,'3563','surprise must reach renderer after ordinary face click');
+ h.tick(40);assert.equal(h.runtime.status().renderedFace,'9002');
+ assert.ok(h.renderer.status().faceBlend.some(f=>f.face==='9002'&&f.weight===1));
+ h.tick(150);assert.equal(h.runtime.status().motion.expression,null);
+ const selected=h.runtime.status().manualFace;
+ assert.equal(h.runtime.status().renderedFace,selected,'recover to selected face');
+ h.action('face:3942');
+ p=h.css([295,222]);h.emit(h.canvas,'pointerdown',p);h.emit(h.win,'pointerup',{...p,buttons:0});h.tick();
+ assert.equal(h.runtime.status().renderedFace,'3563','menu selection also permits a later interaction');
+ h.tick(40);assert.equal(h.runtime.status().renderedFace,'9002');
+ h.action('face:3831');h.tick(10);assert.equal(h.runtime.status().renderedFace,'3831','new manual choice overrides current response');
+ p=h.css([295,222]);h.emit(h.canvas,'pointerdown',p);h.emit(h.win,'pointerup',{...p,buttons:0});h.tick(40);
+ assert.equal(h.runtime.status().renderedFace,'9002','next click can react again');
+ h.emit(h.win,'blur');assert.equal(h.runtime.status().renderedFace,'3831');h.tick(10);
+ assert.equal(h.runtime.status().motion.expression,null);
+ assert.deepEqual(h.errors,[]);
+});

@@ -9,6 +9,7 @@
 !*.html
 !*.py
 !*.bat
+!*.cmd
 !*.ps1
 !*.md
 !/.gitignore
@@ -101,3 +102,10 @@ coverage/
 .hermes-*/
 .codex-*/
 /puppet/rig/*-report.json
+
+# Current runtime: local assets and helper bundles stay outside Git.
+/artwork/
+/verification/
+/kaqiu/assets/
+/kaqiu/bin/
+/kaqiu/build/

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+  <title>小伯白 · 正式版</title>
+  <link rel="stylesheet" href="desktop.css">
+</head>
+<body>
+  <canvas id="character" width="240" height="348" aria-label="小伯白桌宠。Ctrl加拖动搬动，Ctrl加滚轮缩放，Ctrl加Shift加双击隐藏，右键打开菜单。"></canvas>
+  <div id="toolbar" hidden role="toolbar" aria-label="桌宠控制，右键菜单可收起功能栏">
+    <button id="grip" type="button" title="按住搬动桌宠；人物触摸不会搬窗" aria-label="按住搬动桌宠">移</button>
+    <button id="smaller" type="button" title="缩小，也可 Ctrl+滚轮" aria-label="缩小桌宠">−</button>
+    <button id="larger" type="button" title="放大，也可 Ctrl+滚轮" aria-label="放大桌宠">+</button>
+    <button id="hop" type="button" title="跳一下" aria-label="跳一下">跳</button>
+    <button id="menu" type="button" title="表情、置顶、穿透和退出" aria-label="打开桌宠菜单">⋯</button>
+    <button id="hide" type="button" title="隐藏到托盘" aria-label="隐藏桌宠">隐</button>
+  </div>
+  <div id="notice" role="status" aria-live="polite">正在加载小伯白</div>
+  <script src="src/material-rig.js"></script>
+  <script src="src/character.js"></script>
+  <script src="src/view.js"></script>
+  <script src="src/hit-test.js"></script>
+  <script src="src/response-config.js"></script>
+  <script src="src/reference-motion.js"></script>
+  <script src="src/director.js"></script>
+  <script src="src/desktop-view.js"></script>
+  <script src="src/character-renderer.js"></script>
+  <script src="src/desktop-runtime.js"></script>
+  <script src="src/desktop-bootstrap.js"></script>
+</body>
+</html>

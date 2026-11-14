@@ -1,0 +1,20 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {createHarness}=require('./helpers/interaction-fixtures.cjs');
+test('I19 desktop runs the authored action, renders its smile, preserves manual face, and blocks during chat',async t=>{
+ let present;const h=await createHarness({configurePet:pet=>{pet.onChatPresentation=f=>{present=f;return()=>{};};}});
+ t.after(()=>h.runtime.destroy());h.runtime.start();h.tick(2);h.tick(50,100);
+ let s=h.runtime.status();assert.equal(s.motion.idleAction?.name,'weight-shift','desktop must opt into the complete action');
+ assert.equal(s.motion.idleAction.phase,'hold');assert.equal(s.renderedFace,'3901');
+ assert.ok(h.draws.some(d=>d.texture==='baijie-skirt-front.png'),'real layered renderer is connected');
+ h.action('face:3831');h.tick(2,100);assert.equal(h.runtime.status().renderedFace,'3831');
+ present({id:1,reply:'本地测试回应',face:3901,action:'none'});h.tick(10,100);
+ s=h.runtime.status();assert.equal(s.motion.idleAction.completed,0);assert.equal(s.renderedFace,'3831');
+ assert.ok(Math.abs(s.motion.pose.bodyRoll)<0.002,'chat interrupted the body action');
+ h.action('face:auto');h.action('shell:cancel');h.tick(2,100);
+ assert.equal(h.runtime.status().renderedFace,'3942','cancelled idle face must not revive');
+ const before=h.runtime.status().motion.time;h.action('idle:hold');h.tick(3,100);assert.equal(h.runtime.status().motion.time,before);
+ h.action('idle:release');h.tick(20,100);assert.equal(h.runtime.status().motion.idleAction.completed,0);
+ h.action('idle:off');h.tick(40,100);s=h.runtime.status();assert.equal(s.motion.idleAction.completed,0);assert.equal(s.motion.pose.bodyRoll,0);
+ assert.deepEqual(h.errors,[]);assert.equal(h.runtime.status().manualFace,'auto');
+});
