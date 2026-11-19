@@ -5,9 +5,9 @@ const finite = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v
 const pair = (v, min, max) => v !== null && typeof v === 'object' && !Array.isArray(v)
   && Object.keys(v).length === 2 && finite(v.x, min, max) && finite(v.y, min, max);
 const actions = new Set(['hop', 'blink', 'face-next', 'face:auto', 'idle:on', 'idle:off', 'idle:hold', 'idle:release',
-  'shell:hide', 'shell:show', 'shell:cancel', 'toolbar:toggle',
-  ...['hum','stretch','sneeze','peek','doze','bounce','wake','rouse','lookAround','all','stop'].map(id => `motion:${id}`),
-  ...[3496, 3563, 3599, 3625, 3665, 3711, 3751, 3791, 3831, 3901, 3942, 9001, 9002, 9003].map(id => `face:${id}`)]);
+  'shell:hide', 'shell:show', 'shell:cancel', 'toolbar:toggle', 'walk:now',
+  ...['hum','stretch','sneeze','peek','doze','bounce','wake','rouse','lookAround','care','all','stop'].map(id => `motion:${id}`),
+  ...[3496, 3563, 3599, 3625, 3665, 3711, 3751, 3791, 3831, 3901, 3942, 9001, 9002, 9003, 9004, 9005, 9006].map(id => `face:${id}`)]);
 function subscribe(channel, callback, accept = () => true) {
   if (typeof callback !== 'function') throw new TypeError('Expected callback');
   const listener = (_event, value) => { if (accept(value)) callback(value); };
@@ -15,6 +15,13 @@ function subscribe(channel, callback, accept = () => true) {
   return () => ipcRenderer.removeListener(channel, listener);
 }
 if (process.isMainFrame) contextBridge.exposeInMainWorld('pet', Object.freeze({
+  walk(value) {
+    if (!value || !Number.isSafeInteger(value.id) || value.id <= 0 ||
+      !['begin','step','end'].includes(value.phase) ||
+      Object.keys(value).some(k => !['id','phase','offset'].includes(k)) ||
+      (value.phase === 'step' && !finite(value.offset, -10000, 10000))) return;
+    ipcRenderer.send('desktop:walk', value);
+  },
   drag(dx, dy) {
     if (finite(dx, -10000, 10000) && finite(dy, -10000, 10000)) ipcRenderer.send('drag', { dx, dy });
   },
@@ -56,6 +63,7 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld('pet', Object.freeze({
   getState() { return ipcRenderer.invoke('desktop:get-state'); },
   onAction(callback) { return subscribe('action', callback, value => actions.has(value)); },
   onCursor(callback) { return subscribe('desktop:cursor', callback, value => pair(value, -1000000, 1000000)); },
+  onSystemIdle(callback) { return subscribe('desktop:system-idle', callback, value => finite(value, 0, Number.MAX_SAFE_INTEGER)); },
   onChatPresentation(callback) {
     if (typeof callback !== 'function') throw new TypeError('Expected callback');
     const listener = (_event,...args) => {
@@ -75,4 +83,8 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld('pet', Object.freeze({
     return ()=>ipcRenderer.removeListener('chat:presentation',listener);
   },
   onState(callback) { return subscribe('desktop:state', callback); },
+  awarenessBusy(value){if(typeof value==='boolean')ipcRenderer.send('awareness:busy',value);},
+  awarenessResult(id,accepted){if(Number.isSafeInteger(id)&&id>0&&typeof accepted==='boolean')ipcRenderer.send('awareness:result',id,accepted);},
+  awarenessEvent(phase,reason){if(['gesture-started','bubble-sent','response-ended'].includes(phase)&&(reason===undefined||(typeof reason==='string'&&/^[a-z-]{1,40}$/.test(reason))))ipcRenderer.send('awareness:event',{phase,...(reason?{reason}:{})});},
+  onAwareness(callback){return subscribe('awareness:present',callback,v=>v&&Number.isSafeInteger(v.id)&&v.id>0&&typeof v.text==='string'&&v.text.length>0&&[...v.text].length<=100&&Object.keys(v).every(k=>['id','text'].includes(k)));},
 }));

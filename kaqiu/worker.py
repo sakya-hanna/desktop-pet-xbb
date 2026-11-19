@@ -24,56 +24,140 @@ BASE = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
 CARD_IDS = {'miao', 'notes', 'endeye', 'beacon', 'analyzer'}
 
 
+_FFT_CACHE = {}
+_FAST_LEN_CACHE = {}
+
+
+def _fast_fft_len(n):
+    cached = _FAST_LEN_CACHE.get(n)
+    if cached is not None:
+        return cached
+    best = 1 << (n - 1).bit_length()
+    for a in range(14):
+        p2 = 1 << a
+        if p2 >= best:
+            break
+        for b in range(9):
+            p23 = p2 * (3 ** b)
+            if p23 >= best:
+                break
+            v = p23
+            while v < n:
+                v *= 5
+            if v < best:
+                best = v
+    _FAST_LEN_CACHE[n] = best
+    return best
+
+
+def _clear_fft_cache():
+    if len(_FFT_CACHE) > 256:
+        _FFT_CACHE.clear()
+
+
 def box_sum(a, h, w):
-    s = np.pad(a, ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+    s = np.pad(a.astype(np.float64, copy=False), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
     return s[h:, w:] - s[:-h, w:] - s[h:, :-w] + s[:-h, :-w]
 
 
-def correlation(gray, template):
-    """Same zero-mean normalized correlation as supplied detect._match_group."""
+def correlation(gray, template, mask=None, cache_key=None):
+    """Fast 5-smooth FFT zero-mean normalized cross-correlation (with optional mask)."""
     h, w = template.shape
     H, Wd = gray.shape
     if h > H or w > Wd or min(h, w) < 2:
-        return np.full((1, 1), -1.0)
-    g = gray.astype(np.float64)
-    t = template.astype(np.float64) - template.mean()
-    norm = np.sqrt((t * t).sum())
+        return np.full((1, 1), -1.0, dtype=np.float32)
+
+    shape = (_fast_fft_len(H + h - 1), _fast_fft_len(Wd + w - 1))
+    full_key = (cache_key, shape) if cache_key is not None else None
+    cached = _FFT_CACHE.get(full_key) if full_key is not None else None
+
+    if cached is None:
+        t = template.astype(np.float32, copy=False)
+        if mask is not None:
+            m = mask.astype(np.float32, copy=False)
+            wsum = float(m.sum())
+            if wsum < 4.0:
+                return np.full((H - h + 1, Wd - w + 1), -1.0, dtype=np.float32)
+            t_mean = float((t * m).sum()) / wsum
+            t0 = (t - t_mean) * m
+            norm = float(np.sqrt((((t - t_mean) ** 2) * m).sum()))
+            t_fft = np.conj(np.fft.rfft2(t0, s=shape))
+            m_fft = np.conj(np.fft.rfft2(m, s=shape))
+            cached = (True, t_fft, m_fft, wsum, norm)
+        else:
+            t0 = t - float(t.mean())
+            norm = float(np.sqrt((t0 * t0).sum()))
+            t_fft = np.conj(np.fft.rfft2(t0, s=shape))
+            cached = (False, t_fft, None, float(h * w), norm)
+        if full_key is not None:
+            _clear_fft_cache()
+            _FFT_CACHE[full_key] = cached
+
+    has_mask, t_fft, m_fft, wsum, norm = cached
     if norm < 1e-6:
-        return np.full((H-h+1, Wd-w+1), -1.0)
-    shape = (H+h-1, Wd+w-1)
-    corr = np.fft.irfft2(np.fft.rfft2(g, s=shape) * np.conj(np.fft.rfft2(t, s=shape)), s=shape)[:H-h+1, :Wd-w+1]
-    variance = np.maximum(0, box_sum(g*g, h, w) - box_sum(g, h, w)**2/(h*w))
+        return np.full((H - h + 1, Wd - w + 1), -1.0, dtype=np.float32)
+
+    g = gray.astype(np.float32, copy=False)
+    g_zero = g - float(g.mean())
+    oh, ow = H - h + 1, Wd - w + 1
+    g_fft = np.fft.rfft2(g_zero, s=shape)
+    corr = np.fft.irfft2(g_fft * t_fft, s=shape)[:oh, :ow]
+
+    if has_mask:
+        sum_wg = np.fft.irfft2(g_fft * m_fft, s=shape)[:oh, :ow]
+        sum_wg2 = np.fft.irfft2(np.fft.rfft2(g_zero * g_zero, s=shape) * m_fft, s=shape)[:oh, :ow]
+        variance = np.maximum(0.0, sum_wg2 - (sum_wg * sum_wg) / wsum)
+    else:
+        gd = g_zero.astype(np.float64, copy=False)
+        variance = np.maximum(0.0, box_sum(gd * gd, h, w) - box_sum(gd, h, w) ** 2 / wsum)
+
+    min_var = 4.0 * wsum  # Require >= 2.0/255 local patch std-dev; eliminates flat-screen false peaks
     denom = np.sqrt(variance) * norm
-    return np.divide(corr, denom, out=np.full_like(corr, -1.0), where=denom > 1e-6)
+    out = np.full((oh, ow), -1.0, dtype=np.float32)
+    valid = (variance >= min_var) & (denom > 1e-3)
+    out[valid] = np.clip(corr[valid] / denom[valid], -1.0, 1.0).astype(np.float32)
+    return out
+
+
+def yellow_channel(rgb_arr):
+    """ Isolate warm golden HUD text ('已记录成功') from bright snow/sky backgrounds."""
+    r = rgb_arr[..., 0].astype(np.float32)
+    g = rgb_arr[..., 1].astype(np.float32)
+    b = rgb_arr[..., 2].astype(np.float32)
+    return np.clip(0.55 * r + 0.45 * g - 0.65 * b + 64.0, 0.0, 255.0)
 
 
 class EdgeGate:
     """A persistent banner is one event, not a periodic cooldown retrigger."""
-    def __init__(self):
+    def __init__(self, confirm_sec=0.05, release_sec=0.55):
         self.present = False
         self.absent_since = None
         self.hit_since = None
+        self.confirm_sec = confirm_sec
+        self.release_sec = release_sec
 
     def update(self, hit, now):
         if hit:
             self.absent_since = None
             if self.hit_since is None:
                 self.hit_since = now
-            if not self.present and now-self.hit_since >= 0.10:
+            if not self.present and now - self.hit_since >= self.confirm_sec:
                 self.present = True
                 return True
         else:
             self.hit_since = None
             if self.absent_since is None:
                 self.absent_since = now
-            if now-self.absent_since >= 0.6:
+            if now - self.absent_since >= self.release_sec:
                 self.present = False
         return False
 
 
 class InstallGate:
+    """Matches Reference app.py install state machine with explicit `armed` latch."""
     def __init__(self):
         self.first = self.last = self.missing = None
+        self.armed = False
 
     def update(self, hit, now, min_seen, gone):
         if hit:
@@ -81,60 +165,83 @@ class InstallGate:
                 self.first = now
             self.last = now
             self.missing = None
+            if now - self.first >= min_seen:
+                self.armed = True
         elif self.first is not None:
             if self.missing is None:
                 self.missing = now
-            if now-self.missing >= gone:
-                fire = self.last-self.first >= min_seen
+            if now - self.missing >= gone:
+                fire = self.armed or (self.last - self.first >= min_seen)
                 self.first = self.last = self.missing = None
+                self.armed = False
                 return fire
         return False
 
 
 class MessageGate:
-    """Count matching own-message rows. Scrolling alone must not start a timer.
-
-    New identical rows increase the count; disappearing chat re-arms after a
-    sustained absence. A full chat containing visually identical replacements
-    is intrinsically ambiguous without an additional game confirmation cue.
-    """
+    """Detects new own-player '喵喵赐福' chat rows, including full-chat upward scroll."""
     def __init__(self):
         self.count = 0
-        self.candidate = 0
-        self.since = 0
+        self.rows = ()
+        self.candidate = (0, ())
+        self.since = 0.0
         self.absent = None
 
-    def update(self, count, now):
+    @staticmethod
+    def _quantize(rows, line_h):
+        step = max(6, line_h // 2)
+        return tuple(round(y / step) for y in sorted(rows))
+
+    def update(self, rows, now, line_h=24, recent_f8=False):
+        count = len(rows)
         if not count:
             if self.absent is None:
                 self.absent = now
-            if now-self.absent >= 0.8:
-                self.count = self.candidate = 0
+            if now - self.absent >= 0.75:
+                self.count = 0
+                self.rows = ()
+                self.candidate = (0, ())
             return False
+
         self.absent = None
-        if count != self.candidate:
-            self.candidate, self.since = count, now
-        if now-self.since < 0.15:
+        qrows = self._quantize(rows, line_h)
+        sig = (count, qrows)
+        if sig != self.candidate:
+            self.candidate = sig
+            self.since = now
+        if now - self.since < (0.06 if recent_f8 else 0.11):
             return False
-        old, self.count = self.count, count
-        return count > old
+
+        old_count, old_rows = self.count, self.rows
+        self.count, self.rows = count, sorted(rows)
+        if count > old_count:
+            return True
+        # Full chat box scroll: an older own-message scrolled off the top while a new
+        # message appeared at the bottom (count stays >=1, top/bottom rows shifted up
+        # or F8 was just dispatched and row layout shifted).
+        if old_count > 0 and old_rows:
+            shifted_up = any(all(abs(oy - ny) >= max(10, int(line_h * 0.65)) for oy in old_rows) for ny in self.rows)
+            if shifted_up and (recent_f8 or self.rows[-1] >= old_rows[-1] - 4):
+                return True
+        return False
 
 
 def own_message(sub, x, y, h, threshold):
-    band = np.asarray(sub.crop((0, max(0, y-4), max(1, x), min(sub.height, y+h+4))), dtype=np.int16)
+    band = np.asarray(sub.crop((0, max(0, y - 4), max(1, x), min(sub.height, y + h + 4))), dtype=np.int16)
     if not band.size:
         return False
     r, g, b = band[..., 0], band[..., 1], band[..., 2]
-    yellow = (r > 170) & (g > 140) & (b < 130) & (r-b > 60)
-    blue = (b > 150) & (b-r > 40)
+    yellow = (r > 165) & (g > 135) & (b < 135) & (r - b > 55)
+    blue = (b > 150) & (b - r > 40)
     return float(yellow.mean()) > max(threshold, float(blue.mean()))
 
 
 class Recognizer:
-    def __init__(self, assets=BASE/'assets'):
+    def __init__(self, assets=BASE / 'assets'):
         self.assets = Path(assets)
-        self.config = json.loads((self.assets/'config.default.json').read_text(encoding='utf-8-sig'))
+        self.config = json.loads((self.assets / 'config.default.json').read_text(encoding='utf-8-sig'))
         self.geometry = None
+        self.uiscale = 1.0
         self.rules = []
         self.selected = {'miao', 'notes'}
         self.edges = {}
@@ -142,84 +249,253 @@ class Recognizer:
         self.messages = MessageGate()
         self.last_miao = -math.inf
         self.last_round = -math.inf
-        self.profile = False
+        self.last_checked = {}
+        self.last_scores = {}
+        self.recent_f8_until = -math.inf
+        self.cache_id = object()
+
+    def notify_f8(self, now):
+        self.recent_f8_until = now + 3.2
 
     def reset_contacts(self):
-        self.installs.clear()  # Alt-tab/HUD loss must not mean a grenade was thrown.
+        self.installs.clear()
 
     def clear(self):
         self.reset_contacts()
-        # Keep visible-banner latches: clearing a round must not immediately
-        # re-detect the same screen. New screen appearances can re-arm normally.
 
     def configure(self, cards):
         self.selected = set(cards) & CARD_IDS
         self.geometry = None
+
+    def _build_rule_specs(self, width, height):
+        u = min(width / 1920.0, height / 1080.0)
+        self.uiscale = u
+        v2 = self.assets / 'templates_v2'
+        v1 = self.assets / 'templates'
+        use_v2 = v2.exists()
+
+        specs = [
+            {
+                'card': 'endeye',
+                'key': 'endeye',
+                'path': (v2 / 'endeye_clean.png') if use_v2 else (v1 / 'endeye_name.png'),
+                'rect': (int(185 * u), int(height * 0.5 + 15 * u), int(290 * u), int(155 * u)),
+                'threshold': 0.80,
+                'jitters': (1.0, 0.96, 1.04),
+            },
+            {
+                'card': 'beacon',
+                'key': 'beacon',
+                'type': 'install',
+                'path': (v2 / 'beacon_clean.png') if use_v2 else (v1 / 'beacon_text.png'),
+                'rect': (int(width * 0.5 + 110 * u), int(height * 0.5 + 150 * u), int(470 * u), int(200 * u)),
+                'threshold': 0.78,
+                'min_seen': 0.42,
+                'gone_sec': 0.55,
+                'jitters': (1.0, 0.96, 1.04),
+            },
+            {
+                'card': 'notes',
+                'key': 'notes',
+                'path': (v2 / 'notes_text.png') if use_v2 else (v1 / 'notes_banner.png'),
+                'rect': (int(width * 0.5 - 190 * u), int(185 * u), int(380 * u), int(215 * u)),
+                'threshold': 0.72,
+                'yellow_boost': True,
+                'jitters': (1.0, 0.96, 1.04),
+            },
+            {
+                'card': 'analyzer',
+                'key': 'analyzer_upper',
+                'type': 'install',
+                'path': (v2 / 'analyzer_octagon.png') if use_v2 else (v1 / 'analyzer_icon4.png'),
+                'mask_path': (v2 / 'analyzer_mask.png') if use_v2 else None,
+                'rect': (int(width - 170 * u), int(height * 0.5 + 75 * u), int(170 * u), int(97 * u)),
+                'threshold': 0.80,
+                'min_seen': 0.22,
+                'gone_sec': 0.28,
+                'jitters': (1.0, 0.96, 1.04),
+            },
+            {
+                'card': 'analyzer',
+                'key': 'analyzer_lower',
+                'type': 'install',
+                'path': (v2 / 'analyzer_octagon.png') if use_v2 else (v1 / 'analyzer_icon.png'),
+                'mask_path': (v2 / 'analyzer_mask.png') if use_v2 else None,
+                'rect': (int(width - 170 * u), int(height * 0.5 + 171 * u), int(170 * u), int(125 * u)),
+                'threshold': 0.80,
+                'min_seen': 0.22,
+                'gone_sec': 0.28,
+                'jitters': (1.0, 0.96, 1.04),
+            },
+            {
+                'card': 'miao',
+                'key': 'miao',
+                'path': (v2 / 'miao_prefix.png') if use_v2 else (v1 / 'miao_text.png'),
+                'rect': (
+                    0,
+                    int(min(height * 0.5 + 175 * u, height - 370 * u)),
+                    int(460 * u),
+                    int(max(290 * u, height - 65 * u - min(height * 0.5 + 175 * u, height - 370 * u))),
+                ),
+                'threshold': 0.80,
+                'owner_yellow': 0.0025,
+                'jitters': (1.0, 0.96, 1.04),
+            },
+            {
+                'card': 'victory_super',
+                'key': 'victory_super',
+                'action': 'gameover',
+                'interval': 0.85,
+                'path': v1 / 'victory_super.png',
+                'rect': (int(width * 0.5 - 315 * u), int(height * 0.5 - 285 * u), int(630 * u), int(165 * u)),
+                'threshold': 0.86,
+                'jitters': (1.0,),
+            },
+            {
+                'card': 'victory_crystal',
+                'key': 'victory_crystal',
+                'action': 'gameover',
+                'interval': 0.85,
+                'path': v1 / 'victory_crystal.png',
+                'rect': (int(width * 0.5 - 315 * u), int(height * 0.5 - 285 * u), int(630 * u), int(165 * u)),
+                'threshold': 0.86,
+                'jitters': (1.0,),
+            },
+        ]
+        # Exact measured layouts take priority for already-supported cards.
+        # Use the scaled V2 rules for cards absent from an exact profile.
+        profile = next((p for p in self.config['profiles'] if tuple(p['size']) == (width, height)), None)
+        if profile:
+            authored = [
+                {**r, 'key': r.get('key', r['card']), 'path': self.assets / profile['templates'] / r['template'],
+                 'rect': tuple(r['region']), 'template_scale': 1.0, 'jitters': (1.0,),
+                 'threshold': r.get('threshold', self.config['match_threshold'])}
+                for r in profile['rules']
+            ]
+            covered = {r['card'] for r in authored}
+            return authored + [r for r in specs if r['card'] not in covered]
+        return specs
 
     def setup(self, geometry):
         if geometry == self.geometry:
             return
         self.geometry = geometry
         _, _, width, height = geometry
+        if width < 300 or height < 200:
+            self.rules = []
+            return
         self.reset_contacts()
-        self.profile = (width, height) == (2560, 1600)
-        profile = next((p for p in self.config['profiles'] if tuple(p['size']) == (width, height)), None)
-        definitions = profile['rules'] if profile else self.config['rules']
-        folder = self.assets/(profile['templates'] if profile else 'templates')
+        self.last_checked.clear()
         self.rules = []
-        for r in definitions:
-            if r['card'] not in self.selected and r.get('action') != 'gameover':
+        for spec in self._build_rule_specs(width, height):
+            if spec['card'] not in self.selected and spec.get('action') != 'gameover':
                 continue
-            source = Image.open(folder/r['template']).convert('L')
-            sx, sy = (1, 1) if profile else (width/1920, height/1080)
-            x, y, w, h = r['region']
-            if profile:
-                rect = (x, y, w, h)
-            else:
-                anchor = r.get('anchor', 'left')
-                x = width-(1920-x)*sx if anchor == 'right' else width/2+(x-960)*sx if anchor == 'center' else x*sx
-                rect = (int(x), int(y*sy), int(w*sx), int(h*sy))
+            src_rgb = Image.open(spec['path']).convert('RGB')
+            src_gray = src_rgb.convert('L')
+            src_mask = Image.open(spec['mask_path']).convert('L') if spec.get('mask_path') and spec['mask_path'].exists() else None
             variants = []
-            for jitter in r.get('jitters', self.config.get('jitters', [1])):
-                variants.append(np.asarray(source.resize((max(2, round(source.width*sx*jitter)), max(2, round(source.height*sy*jitter))), Image.Resampling.BILINEAR), dtype=np.float32))
-            self.rules.append((r, rect, variants))
+            scale = spec.get('template_scale', self.uiscale)
+            for jitter in spec.get('jitters', (1.0,)):
+                tw = max(2, round(src_gray.width * scale * jitter))
+                th = max(2, round(src_gray.height * scale * jitter))
+                tpl_g = np.asarray(src_gray.resize((tw, th), Image.Resampling.BILINEAR), dtype=np.float32)
+                tpl_m = (np.asarray(src_mask.resize((tw, th), Image.Resampling.BILINEAR), dtype=np.float32) / 255.0) if src_mask else None
+                tpl_y = yellow_channel(np.asarray(src_rgb.resize((tw, th), Image.Resampling.BILINEAR), dtype=np.uint8)) if spec.get('yellow_boost') else None
+                ckey = (self.cache_id, spec['key'], width, height, round(jitter, 3))
+                variants.append((jitter, tpl_g, tpl_m, tpl_y, ckey))
+            self.rules.append((spec, spec['rect'], variants))
+
+    def _eval_variant(self, gray, yel, variant, threshold=1.0):
+        _, tpl_g, tpl_m, tpl_y, ckey = variant
+        smap = correlation(gray, tpl_g, mask=tpl_m, cache_key=(ckey, 'g'))
+        best = float(smap.max())
+        if best < threshold and tpl_y is not None and yel is not None:
+            ymap = correlation(yel, tpl_y, mask=tpl_m, cache_key=(ckey, 'y'))
+            ybest = float(ymap.max())
+            if ybest > best:
+                smap, best = ymap, ybest
+        return smap, best, tpl_g.shape
 
     def process(self, frame, now):
         events = []
-        for r, (x, y, w, h), templates in self.rules:
-            # Clip the scan ROI to the client; no extra desktop capture.
-            sub = frame.crop((max(0, x), max(0, y), min(frame.width, x+w), min(frame.height, y+h))).convert('RGB')
-            if min(sub.size) < 2:
+        for spec, (x, y, w, h), variants in self.rules:
+            cid, key = spec['card'], spec['key']
+            interval = spec.get('interval', 0.0)
+            if interval > 0.0 and (key not in self.edges or self.edges[key].hit_since is None):
+                prev_t = self.last_checked.get(key, -math.inf)
+                if 0.0 <= now - prev_t < interval:
+                    continue
+                self.last_checked[key] = now
+            x0, y0 = max(0, x), max(0, y)
+            x1, y1 = min(frame.width, x + w), min(frame.height, y + h)
+            if x1 - x0 < 4 or y1 - y0 < 4:
                 continue
-            gray = np.asarray(sub.convert('L'), dtype=np.float32)
-            threshold = r.get('threshold', self.config['match_threshold'])
-            maps = [(correlation(gray, tpl), tpl.shape) for tpl in templates]
-            scoremap, (th, tw) = max(maps, key=lambda item: float(item[0].max()))
-            hit = float(scoremap.max()) >= threshold
-            cid, key = r['card'], r.get('key', r['card'])
+            sub = frame.crop((x0, y0, x1, y1)).convert('RGB')
+            rgb = np.asarray(sub, dtype=np.uint8)
+            gray = (0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]).astype(np.float32)
+
+            threshold = spec['threshold']
+            skip_fft = False
+            if spec.get('yellow_boost'):
+                r16 = rgb[..., 0].astype(np.int16)
+                if int(((r16 > 165) & (rgb[..., 1] > 125) & (r16 - rgb[..., 2] > 45)).sum()) < 20:
+                    skip_fft = True
+            elif spec.get('mask_path') is not None:
+                if int((gray > 195).sum()) < 25:
+                    skip_fft = True
+            elif cid in ('miao', 'endeye', 'beacon') or spec.get('action') == 'gameover':
+                if float(gray.max()) - float(gray.min()) < 28.0:
+                    skip_fft = True
+
+            if skip_fft:
+                self.last_scores[key] = 0.0
+                if cid == 'miao':
+                    self.messages.update([], now)
+                elif spec.get('type') == 'install':
+                    if self.installs.setdefault(key, InstallGate()).update(False, now, spec.get('min_seen', 0.25), spec.get('gone_sec', 0.45)):
+                        events.append({'type': 'trigger', 'card': cid})
+                else:
+                    self.edges.setdefault(key, EdgeGate()).update(False, now)
+                continue
+
+            yel = yellow_channel(rgb) if spec.get('yellow_boost') else None
+            # Stage 1: primary scale (jitter = 1.0)
+            scoremap, best_score, (th, tw) = self._eval_variant(gray, yel, variants[0], threshold)
+            # Stage 2: only probe scale jitters on borderline misses
+            if best_score < threshold and best_score >= threshold - 0.14 and len(variants) > 1:
+                for var in variants[1:]:
+                    sm2, sc2, shp2 = self._eval_variant(gray, yel, var, threshold)
+                    if sc2 > best_score:
+                        scoremap, best_score, (th, tw) = sm2, sc2, shp2
+
+            self.last_scores[key] = round(best_score, 3)
+            hit = best_score >= threshold
+
             if cid == 'miao':
                 rows = []
                 candidates = scoremap.copy()
                 while len(rows) < 12 and float(candidates.max()) >= threshold:
                     yy, xx = np.unravel_index(int(candidates.argmax()), candidates.shape)
-                    if own_message(sub, int(xx), int(yy), th, r.get('owner_yellow', 0.003)):
+                    if own_message(sub, int(xx), int(yy), th, spec.get('owner_yellow', 0.0025)):
                         rows.append(int(yy))
-                    candidates[max(0, yy-th//2):yy+th, :] = -1
-                if self.messages.update(len(rows), now) and now-self.last_miao >= 15:
+                    # Suppress full template height above AND below to prevent double-peak jitter
+                    candidates[max(0, yy - th):min(candidates.shape[0], yy + th), :] = -1.0
+                recent_f8 = now <= self.recent_f8_until
+                if self.messages.update(rows, now, line_h=th, recent_f8=recent_f8) and now - self.last_miao >= 15:
                     self.last_miao = now
-                    events.append({'type':'trigger', 'card':'miao'})
-            elif r.get('type') == 'install':
+                    events.append({'type': 'trigger', 'card': 'miao'})
+            elif spec.get('type') == 'install':
                 gate = self.installs.setdefault(key, InstallGate())
-                if gate.update(hit, now, r.get('min_seen', 1), r.get('gone_sec', 0.9)):
-                    events.append({'type':'trigger', 'card':cid})
+                if gate.update(hit, now, spec.get('min_seen', 0.25), spec.get('gone_sec', 0.45)):
+                    events.append({'type': 'trigger', 'card': cid})
             elif self.edges.setdefault(key, EdgeGate()).update(hit, now):
-                if r.get('action') == 'gameover':
-                    if now-self.last_round >= 15:
+                if spec.get('action') == 'gameover':
+                    if now - self.last_round >= 15:
                         self.last_round = now
                         self.reset_contacts()
-                        events.append({'type':'round-end'})
+                        events.append({'type': 'round-end'})
                 else:
-                    events.append({'type':'trigger', 'card':cid})
+                    events.append({'type': 'trigger', 'card': cid})
         return events
 
 
@@ -420,7 +696,8 @@ def run(pipe, probe=False):
                 if f8 and not old_f8 and state['miaoEnabled']:
                     # Do not carry Ctrl/Alt/Shift/Win into the Enter sequence.
                     if not any(native.down(v) for v in [0x10, 0x11, 0x12, 0x5B, 0x5C]):
-                        send_miao(native, lambda:not stopped.is_set() and state['miaoEnabled'], emit)
+                        if send_miao(native, lambda:not stopped.is_set() and state['miaoEnabled'], emit):
+                            detector.notify_f8(time.monotonic())
                 if clear and not old_clear and native.down(0x11) and native.game():
                     emit({'type':'clear'})
                 old_f8, old_clear = f8, clear
@@ -446,8 +723,6 @@ def run(pipe, probe=False):
                 _, geometry = game
                 detector.setup(geometry)
                 status = '正在识别游戏画面'
-                if detector.profile:
-                    status = '16:10 模板：喵喵暂需手动计时，其他已选卡牌可识别'
                 frame = capture.get(geometry)
                 if frame is not None:
                     # Ignore a frame if the player switched apps while capturing.

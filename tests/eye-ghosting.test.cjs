@@ -5,7 +5,8 @@ const {createHarness}=require('./helpers/interaction-fixtures.cjs');
 // These points cover the irises above/below the closed lashes in material space.
 function ghostCount(h,reference){
  const layer=h.draws.find(d=>d.texture==='expression-face');assert.ok(layer);
- const x0=Math.min(...Array.from(layer.rest).filter((_,i)=>i%2===0)),y0=Math.min(...Array.from(layer.rest).filter((_,i)=>i%2===1));
+ const rects=Object.values(h.meta.character.faces);
+ const x0=Math.floor(Math.min(...rects.map(r=>r.x))),y0=Math.floor(Math.min(...rects.map(r=>r.y)));
  let blue=0;
  for(let y=0;y<layer.height;y++)for(let x=0;x<layer.width;x++){
   const X=x0+x+.5,Y=y0+y+.5;
@@ -22,7 +23,10 @@ test('sustained closure and closed-expression transitions never show blue iris t
  const h=await createHarness({idle:false});
  h.renderer.render({},'3942',false,1,true,[{face:'3942',weight:1}]);
  const baseline=new Uint8Array(h.draws.find(d=>d.texture==='expression-face').pixels);
- h.renderer.render({},'3942',false,.1,true,[{face:'3942',weight:1}]);assert.ok(ghostCount(h,baseline)>50,'positive control sees the actual painted blue iris');
+ h.renderer.render({},'3942',false,.1,true,[{face:'3942',weight:1}]);
+ const open=ghostCount(h,baseline);assert.ok(open>50,'positive control sees the actual painted blue iris');
+ h.renderer.render({},'3942',false,.28,true,[{face:'3942',weight:1}]);
+ const half=ghostCount(h,baseline);assert.ok(half>0&&half<open,'authored half blink covers part of the open iris');
  for(const amount of [.5,.6,.9,1]){
   h.renderer.render({},'3942',false,amount,true,[{face:'3942',weight:1}]);
   assert.equal(ghostCount(h,baseline),0,'blink '+amount+' must remove iris, not just reduce its opacity');

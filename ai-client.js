@@ -19,7 +19,7 @@ function transportFailure(nativeError){
 // Keyless endpoints omit Authorization. Invalid responses fail closed.
 // All errors have fixed/sanitized messages (HTTP status only); cancellation is
 // Error with name='AbortError'. Parent must handle errors and ignore stale replies.
-async function request({config,messages,system,signal,timeoutMs=30000}) {
+async function complete({config,messages,system,signal,timeoutMs=30000}, {image=null,parseContent=parse}={}) {
   let url,body;
   try {
     if (!config || typeof config.baseUrl !== 'string' || config.baseUrl.length > 2048 || !/^https?:\/\/[^/]/i.test(config.baseUrl) || /[\s?#\\]/u.test(config.baseUrl) || config.baseUrl.split('/')[2].includes('@')) throw new Error();
@@ -38,7 +38,12 @@ async function request({config,messages,system,signal,timeoutMs=30000}) {
       if (length>4000 || total>32000) throw new Error();
       return {role:row.role,content:row.content};
     });
-    body=JSON.stringify({model:config.model,messages:[{role:'system',content:system},...rows],stream:false});
+    if(image!==null){
+      if(!Buffer.isBuffer(image)||image.length<4||image.length>2*1024*1024||image[0]!==255||image[1]!==216)throw new Error();
+      const last=rows.at(-1);if(last.role!=='user')throw new Error();
+      last.content=[{type:'text',text:last.content},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+image.toString('base64')}}];
+    }
+    body=JSON.stringify({model:config.model,messages:[{role:'system',content:system},...rows],stream:false,...(image?{max_tokens:250}:{})});
   } catch { throw new Error('Invalid AI request'); }
   return new Promise((resolve,reject)=>{
     let req,timer,settled=false;
@@ -61,7 +66,7 @@ async function request({config,messages,system,signal,timeoutMs=30000}) {
         const chunks=[];let bytes=0;
         res.on('data',c=>{bytes+=c.length;if(bytes>262144){finish(new Error('AI response too large'));res.destroy();}else chunks.push(c);});
         res.on('end',()=>{
-          try { finish(null,parse(JSON.parse(Buffer.concat(chunks).toString('utf8')).choices[0].message.content)); }
+          try { finish(null,parseContent(JSON.parse(Buffer.concat(chunks).toString('utf8')).choices[0].message.content)); }
           catch { finish(new Error('Invalid AI response')); }
         });
       });
@@ -69,4 +74,9 @@ async function request({config,messages,system,signal,timeoutMs=30000}) {
     } catch(error) { finish(transportFailure(error)); }
   });
 }
-module.exports = {request};
+const request=options=>complete(options);
+function requestImage({config,image,prompt,signal}){
+  return complete({config,system:prompt,messages:[{role:'user',content:'请判断这张当前 Codex 窗口画面。'}],signal},
+    {image,parseContent:content=>{if(typeof content!=='string'||!content.trim())throw Error();return content;}});
+}
+module.exports = {request,requestImage};

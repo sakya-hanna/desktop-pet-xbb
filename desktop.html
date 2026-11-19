@@ -9,6 +9,7 @@
 </head>
 <body>
   <canvas id="character" width="240" height="348" aria-label="小伯白桌宠。Ctrl加拖动搬动，Ctrl加滚轮缩放，Ctrl加Shift加双击隐藏，右键打开菜单。"></canvas>
+  <canvas id="fx" width="240" height="348" aria-hidden="true"></canvas>
   <div id="toolbar" hidden role="toolbar" aria-label="桌宠控制，右键菜单可收起功能栏">
     <button id="grip" type="button" title="按住搬动桌宠；人物触摸不会搬窗" aria-label="按住搬动桌宠">移</button>
     <button id="smaller" type="button" title="缩小，也可 Ctrl+滚轮" aria-label="缩小桌宠">−</button>
@@ -23,9 +24,12 @@
   <script src="src/view.js"></script>
   <script src="src/hit-test.js"></script>
   <script src="src/response-config.js"></script>
+  <script src="src/idle-performance.js"></script>
   <script src="src/reference-motion.js"></script>
   <script src="src/director.js"></script>
+  <script src="src/wander.js"></script>
   <script src="src/desktop-view.js"></script>
+  <script src="src/fx-overlay.js"></script>
   <script src="src/character-renderer.js"></script>
   <script src="src/desktop-runtime.js"></script>
   <script src="src/desktop-bootstrap.js"></script>

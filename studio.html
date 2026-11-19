@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+  <title>白姐 · 窗边小憩</title>
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body data-theme="day">
+  <svg class="symbols" aria-hidden="true"><defs>
+    <symbol id="flower" viewBox="0 0 40 40"><g fill="currentColor" stroke="currentColor" stroke-width=".4"><ellipse cx="20" cy="11" rx="6" ry="10"/><ellipse cx="20" cy="11" rx="6" ry="10" transform="rotate(72 20 20)"/><ellipse cx="20" cy="11" rx="6" ry="10" transform="rotate(144 20 20)"/><ellipse cx="20" cy="11" rx="6" ry="10" transform="rotate(216 20 20)"/><ellipse cx="20" cy="11" rx="6" ry="10" transform="rotate(288 20 20)"/></g><circle cx="20" cy="20" r="3" fill="#fff7ce"/></symbol>
+    <symbol id="chat-icon" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 1-8 8H7l-4 3 1-6a8 8 0 1 1 16-5Z"/><path d="M8 10h8M8 14h5"/></symbol>
+    <symbol id="settings-icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></symbol>
+    <symbol id="desktop-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></symbol>
+    <symbol id="panel-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16m3-11h1m-1 4h1"/></symbol>
+  </defs></svg>
+
+  <div class="room" aria-hidden="true">
+    <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <linearGradient id="wall" x2="0" y2="1"><stop class="wall-top"/><stop offset="1" class="wall-bottom"/></linearGradient>
+        <linearGradient id="sky" x2="0" y2="1"><stop class="sky-top"/><stop offset="1" class="sky-bottom"/></linearGradient>
+        <linearGradient id="floor" x2="0" y2="1"><stop class="floor-top"/><stop offset="1" class="floor-bottom"/></linearGradient>
+        <linearGradient id="curtain" x2="1" y2="0"><stop stop-color="#cce1e8"/><stop offset=".4" stop-color="#fffef9"/><stop offset=".7" stop-color="#f3f9fb"/><stop offset="1" stop-color="#afcbd8"/></linearGradient>
+        <linearGradient id="vase" x2="1" y2=".2"><stop stop-color="#b3d8e2" stop-opacity=".5"/><stop offset=".5" stop-color="#fff" stop-opacity=".8"/><stop offset="1" stop-color="#9abfce" stop-opacity=".6"/></linearGradient>
+        <pattern id="wall-lines" width="90" height="200" patternUnits="userSpaceOnUse"><path d="M0 0v200" stroke="#a4bdc9" stroke-opacity=".12"/></pattern>
+      </defs>
+      <rect width="1440" height="900" fill="url(#wall)"/>
+      <rect width="1440" height="730" fill="url(#wall-lines)"/>
+      <path d="M0 724H1440V900H0Z" fill="url(#floor)"/>
+      <g fill="none" stroke="#adc4cc" stroke-opacity=".3"><path d="M0 726h1440M0 734h1440M0 798h1440M0 877h1440"/><path d="M170 734 0 900m360-166L260 900m300-166L520 900m240-166 20 166m180-166 90 166m110-166 160 166"/></g>
+      <g class="window-frame">
+        <path d="M114 650V240a242 242 0 0 1 484 0v410Z" fill="#c7dce4"/>
+        <path d="M130 634V244a226 226 0 0 1 452 0v390Z" fill="url(#sky)"/>
+        <circle class="sun" cx="460" cy="182" r="49" fill="#fff9dc"/>
+        <g class="moon"><circle cx="459" cy="182" r="34" fill="#e8f4ff"/><circle cx="472" cy="170" r="30" fill="#344e76"/></g>
+        <g fill="#fff" class="clouds" opacity=".6"><path d="M130 320c80-50 105 8 160-20s113-31 175 8 75-20 117-4v35H130Z"/><path d="M130 405c89-27 138-23 227 10s128-1 225-10v44H130Z"/></g>
+        <path d="M130 515q120-40 230-5t222-2v126H130Z" class="distant"/>
+        <g class="stars" fill="#f5fbff"><circle cx="210" cy="210" r="2"/><circle cx="290" cy="150" r="1.5"/><circle cx="372" cy="238" r="2"/><circle cx="530" cy="350" r="1.5"/><path d="m222 355 3-8 3 8 8 3-8 3-3 8-3-8-8-3Z"/></g>
+        <path d="M350 30v604M130 326h452M130 490h452" fill="none" stroke="#edf4f2" stroke-width="13"/>
+        <path d="M125 642h461" stroke="#fffefa" stroke-width="13"/>
+        <rect x="93" y="648" width="526" height="14" rx="5" fill="#cbdce2"/>
+        <rect x="85" y="640" width="542" height="12" rx="4" fill="#f9faf6"/>
+      </g>
+      <g class="curtains">
+        <path d="M66-10h131q-12 180-53 330t-39 368L45 710Q95 346 66-10Z" fill="url(#curtain)"/>
+        <path d="M550-10h118q-13 233 8 418t36 295l-111-20q-4-201-28-353T550-10Z" fill="url(#curtain)"/>
+        <g fill="none" stroke="#b5d0dc" stroke-opacity=".5"><path d="M90 0q20 160-7 351t-13 327M120 0q8 132-17 290T86 690M580 0q35 187 39 377t46 308M616 0q-9 222 25 419t48 273"/></g>
+        <path d="m83 412 50 9-5 17-49-10Zm525 20 56-9 4 17-58 8Z" fill="#92bdd5"/>
+        <path d="m119 429 21 58-25-9-11-47m537 2-9 58 27-21 2-40" fill="#92bdd5"/>
+      </g>
+      <path class="sunlight" d="m142 665 443 1 439 234H302Z" fill="#fff9e4" opacity=".3"/>
+      <g class="furniture">
+        <path d="M1065 455h290v235h-290Z" fill="#edf2ee" stroke="#c8d7d9"/>
+        <path d="M1054 450h312v16h-312Z" fill="#fefdf6" stroke="#c8d7d9"/>
+        <rect x="1082" y="485" width="256" height="80" rx="3" fill="#e4eeeb" stroke="#d1dddd"/>
+        <path d="M1082 584h256v86h-256Z" fill="#e4eeeb" stroke="#d1dddd"/>
+        <circle cx="1209" cy="525" r="5" fill="#aabdc2"/><circle cx="1209" cy="625" r="5" fill="#aabdc2"/>
+        <path d="M1080 690v42m257-42v42" stroke="#bacdd0" stroke-width="10"/>
+        <rect x="1100" y="431" width="117" height="13" rx="2" fill="#9bbbd0"/><rect x="1113" y="419" width="110" height="12" rx="2" fill="#eee6d2"/>
+        <path d="M1251 370h51l8 64q-31 22-68 0Z" fill="url(#vase)" stroke="#acccd6"/>
+        <g fill="none" stroke="#8aaea0" stroke-width="3"><path d="m1275 417-15-112m18 102 27-92m-28 84-38-60"/></g>
+        <g fill="#afcce2"><circle cx="1252" cy="300" r="19"/><circle cx="1274" cy="298" r="18"/><circle cx="1262" cy="318" r="19"/><circle cx="1306" cy="321" r="18"/><circle cx="1289" cy="330" r="16"/></g>
+        <g fill="#d6d8ed"><circle cx="1235" cy="337" r="14"/><circle cx="1250" cy="347" r="15"/><circle cx="1299" cy="307" r="12"/></g>
+        <g fill="#edf7fd"><circle cx="1254" cy="300" r="3"/><circle cx="1274" cy="305" r="3"/><circle cx="1262" cy="324" r="3"/><circle cx="1307" cy="320" r="3"/><circle cx="1236" cy="340" r="3"/></g>
+      </g>
+    </svg>
+  </div>
+  <div class="scene-vignette" aria-hidden="true"></div>
+
+  <header class="brand">
+    <span class="brand-flower"><svg><use href="#flower"/></svg></span>
+    <div><div class="brand-name">小伯白 <span>窗边小憩</span></div><p>摸摸头 · 牵牵手 · 揪长发 · 轻拉裙摆</p></div>
+  </header>
+  <main id="stage" aria-label="白姐互动舞台">
+    <div id="canvas-wrap"><canvas id="character" aria-label="白姐，可直接触摸互动；Ctrl加滚轮调整预览大小"></canvas><canvas id="fx" aria-hidden="true"></canvas></div>
+    <div id="speech" hidden role="status" aria-live="polite"><svg><use href="#flower"/></svg><span id="speech-text"></span></div>
+  </main>
+
+  <aside id="panel" class="glass" aria-label="角色控制面板">
+    <div class="panel-heading"><span>和姐姐待一会儿</span><svg><use href="#flower"/></svg></div>
+    <div class="tabs" role="tablist" aria-label="控制面板分页">
+      <button id="tab-play" role="tab" aria-selected="true" aria-controls="page-play" data-tab="play">互动</button>
+      <button id="tab-params" role="tab" aria-selected="false" aria-controls="page-params" data-tab="params" tabindex="-1">参数</button>
+      <button id="tab-view" role="tab" aria-selected="false" aria-controls="page-view" data-tab="view" tabindex="-1">显示</button>
+    </div>
+    <div class="panel-scroll">
+      <section id="page-play" role="tabpanel" aria-labelledby="tab-play">
+        <h2>姿态 <span>POSE</span></h2><div class="button-grid"><button data-action="motion:stop">自然站立</button><button id="reset-view">角色回到中央</button></div>
+        <h2>表情 <span>EXPRESSION</span></h2><div class="button-grid faces" id="expressions"></div>
+        <h2>动作 <span>MOTION</span></h2><div class="button-grid" id="motions"></div>
+        <div class="button-grid playback"><button data-action="motion:all">顺序演示</button><button data-action="motion:stop">停止演示</button></div>
+        <p class="note">也可以直接和白姐互动。她会按触碰的位置，给出原来的动作与表情。</p>
+      </section>
+      <section id="page-params" role="tabpanel" aria-labelledby="tab-params" hidden>
+        <h2>姿态调节 <button id="reset-params" class="text-button">恢复自动</button></h2>
+        <p class="note">拖动滑杆查看姿态。调节仅用于这个窗口，恢复自动即可回到自然动作。</p>
+        <div id="parameters"></div>
+        <div class="quiet-card"><svg><use href="#flower"/></svg><p>不用调参数也没关系，<br>姐姐会自己动起来。</p></div>
+      </section>
+      <section id="page-view" role="tabpanel" aria-labelledby="tab-view" hidden>
+        <h2>窗外时光 <span>SCENE</span></h2>
+        <div class="backgrounds" role="group" aria-label="背景">
+          <button data-bg="auto" aria-pressed="true"><span class="swatch auto"></span>自动</button><button data-bg="day" aria-pressed="false"><span class="swatch day"></span>白天</button><button data-bg="night" aria-pressed="false"><span class="swatch night"></span>夜晚</button><button data-bg="plain" aria-pressed="false"><span class="swatch plain"></span>纯色</button>
+        </div>
+        <h2>显示 <span>VIEW</span></h2>
+        <label class="switch"><span>自动待机动作<small>沿用桌宠的待机设置</small></span><input id="idle" type="checkbox" checked><i aria-hidden="true"></i></label>
+        <label class="switch"><span>视线轻随鼠标</span><input id="follow" type="checkbox" checked><i aria-hidden="true"></i></label>
+        <label class="switch"><span>脸红与情绪特效</span><input id="fx-enabled" type="checkbox" checked><i aria-hidden="true"></i></label>
+        <label class="switch"><span>显示变形网格</span><input id="show-mesh" type="checkbox"><i aria-hidden="true"></i></label>
+        <div class="parameter"><label for="scale">预览大小 <output id="scale-value">100%</output></label><input id="scale" type="range" min="70" max="135" value="100" step="1"></div>
+        <button id="reset-camera" class="wide">恢复大小与位置</button>
+        <p class="note">Ctrl＋拖动移动预览中的白姐，Ctrl＋滚轮缩放。桌面上的位置和大小保持原设置。</p>
+      </section>
+    </div>
+  </aside>
+
+  <div class="presence glass"><span class="presence-dot"></span><div><b id="presence-state">姐姐正在过来…</b><small>今天也在你身边</small></div></div>
+  <nav class="dock glass" aria-label="主窗口功能">
+    <button id="open-chat" title="和白姐聊天"><svg><use href="#chat-icon"/></svg><span>聊天</span></button>
+    <button id="open-settings" title="模型设置"><svg><use href="#settings-icon"/></svg><span>设置</span></button>
+    <button id="open-tools" title="卡丘计时和屏幕陪伴"><span class="tool-icon">···</span><span>工具</span></button>
+    <button id="toggle-panel" aria-expanded="true" aria-controls="panel" title="收起控制面板"><svg><use href="#panel-icon"/></svg><span>面板</span></button>
+    <button id="return-desktop" class="desktop-button"><svg><use href="#desktop-icon"/></svg><span>回到桌面</span></button>
+  </nav>
+  <p id="notice" role="status" aria-live="polite">正在准备窗边的位置…</p>
+  <div id="toolbar" hidden><button id="grip">移</button><button id="smaller">−</button><button id="larger">+</button><button id="hop">跳</button><button id="menu">菜单</button><button id="hide">返回桌面</button></div>
+  <script src="src/material-rig.js"></script><script src="src/character.js"></script><script src="src/view.js"></script><script src="src/hit-test.js"></script><script src="src/response-config.js"></script><script src="src/idle-performance.js"></script><script src="src/reference-motion.js"></script><script src="src/director.js"></script><script src="src/wander.js"></script><script src="src/desktop-view.js"></script><script src="src/fx-overlay.js"></script><script src="src/character-renderer.js"></script><script src="src/desktop-runtime.js"></script><script src="src/studio.js"></script>
+</body>
+</html>

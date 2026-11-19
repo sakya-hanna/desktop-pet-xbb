@@ -1,6 +1,6 @@
 'use strict';
 const path = require('node:path');
-const { layoutSpeech } = require('./shared/speech-layout.js');
+const { layoutFeedback } = require('./shared/speech-layout.js');
 const { assertSessionPolicy } = require('./resource-policy.cjs');
 const FEEDBACK_URL = 'baijie28://app/feedback.html';
 const DEFAULT_DURATION = 3400;
@@ -25,19 +25,21 @@ function validFeedback(value) {
 
 // Owns one passive child, one expiry and the lifetime ID high-water mark.
 // Never changes parent bounds or falls back to a default session/file URL.
-function createFeedbackWindow({ BrowserWindow, screen, parent, session, root, mode = 'hidden', clock = globalThis, retainOnBlur = () => false }) {
+function createFeedbackWindow({ BrowserWindow, screen, parent, session, root, mode = 'hidden', clock = globalThis, retainOnBlur = () => false, onDiagnostic = () => {} }) {
   if (!['hidden', 'visible'].includes(mode)) throw new TypeError('Invalid feedback mode');
   assertSessionPolicy(session);
   const now = typeof clock.now === 'function' ? () => clock.now() : () => performance.now();
   let bubble = null, loaded = false, destroyed = false, enabled = true;
   let current = null, highWater = 0, timer = null;
   const parentListeners = [], childListeners = [];
+  const diagnostic=phase=>{try{onDiagnostic({phase});}catch{}};
   const alive = () => !destroyed && !parent.isDestroyed();
   const childAlive = () => bubble && !bubble.isDestroyed();
   function listen(target, name, fn, list) { target.on(name, fn); list.push([target, name, fn]); }
   function unlisten(list) { for (const [target, name, fn] of list.splice(0)) target.removeListener(name, fn); }
   function clear() {
     const hadState = current !== null;
+    if(hadState)diagnostic('bubble-cleared');
     current = null;
     if (timer !== null) { clock.clearTimeout(timer); timer = null; }
     if (childAlive()) {
@@ -56,14 +58,14 @@ function createFeedbackWindow({ BrowserWindow, screen, parent, session, root, mo
     if (!childAlive() || !loaded) return;
     try {
       const bounds = parent.getBounds();
-      const placement = layoutSpeech(bounds, screen.getDisplayMatching(bounds).workArea,
-        { scale: Math.min(1.5, Math.max(0.75, bounds.height / 348)), textLength: current.kind==='chat'&&[...current.text].length>50?101:[...current.text].length });
-      if (!placement) { clear(); return; }
+      const placement = layoutFeedback(bounds, screen.getDisplayMatching(bounds).workArea,
+        { text: current.text });
+      if (!placement) { diagnostic('bubble-layout-failed');clear(); return; }
       bubble.setBounds(placement);
       // Match the pet's level. The default 'floating' inserts behind the Windows
       // taskbar; when that is non-topmost it also demotes this window's owner.
       bubble.setAlwaysOnTop(parent.isAlwaysOnTop(), 'screen-saver');
-      if (mode === 'visible') bubble.showInactive();
+      if (mode === 'visible') {const wasVisible=bubble.isVisible();bubble.showInactive();if(!wasVisible)diagnostic(bubble.isVisible()?'bubble-window-shown':'bubble-window-hidden');}
     } catch { retire(); }
   }
   function deliver() {
@@ -85,7 +87,7 @@ function createFeedbackWindow({ BrowserWindow, screen, parent, session, root, mo
     owned.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     for (const name of ['will-navigate', 'will-frame-navigate', 'will-redirect', 'will-attach-webview'])
       listen(owned.webContents, name, event => event.preventDefault(), childListeners);
-    const fail = () => { if (bubble === owned) retire(); };
+    const fail = () => { if (bubble === owned) {diagnostic('bubble-window-failed');retire();} };
     listen(owned.webContents, 'did-fail-load', (_event, _code, _description, _url, isMainFrame) => {
       if (isMainFrame !== false) fail();
     }, childListeners);
@@ -93,7 +95,7 @@ function createFeedbackWindow({ BrowserWindow, screen, parent, session, root, mo
     listen(owned, 'closed', fail, childListeners);
     Promise.resolve(owned.loadURL(FEEDBACK_URL)).then(() => {
       if (!alive() || bubble !== owned || owned.isDestroyed()) return;
-      loaded = true; deliver();
+      loaded = true; diagnostic('bubble-window-ready');deliver();
     }).catch(fail);
   }
   function set(value) {
@@ -108,9 +110,10 @@ function createFeedbackWindow({ BrowserWindow, screen, parent, session, root, mo
     // A passive, click-through bubble cannot scroll a full 4000-codepoint reply.
     // Show an explicit excerpt; the unabridged message remains in the chat page.
     const normalized=value.kind==='chat'?value.text.replace(/\s+/gu,' ').trim():value.text;
-    const chars=[...normalized],text=value.kind==='chat'&&chars.length>100
-      ? chars.slice(0,100).join('')+'…（完整回复见聊天窗口）' : normalized;
+    const chars=[...normalized],text=value.kind==='chat'&&chars.length>64
+      ? chars.slice(0,64).join('')+'…（完整回复见聊天窗口）' : normalized;
     current = { id: value.id, text, kind:value.kind, deadline: now() + durationMs };
+    diagnostic('bubble-received');
     const ownedState = current;
     timer = clock.setTimeout(() => { if (current === ownedState) clear(); }, durationMs);
     timer?.unref?.();

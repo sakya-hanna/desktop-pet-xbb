@@ -3,7 +3,7 @@
 // a separately authored Baijie adaptation of its left/right/return sequence.
 // Cat-only targets are
 // kept here for source comparison but are not consumed by this human character.
-(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.ReferenceMotion=api;})(globalThis,function(){
+(function(root,factory){const api=factory(typeof module==='object'&&module.exports?require('./idle-performance.js'):root.IdlePerformance);if(typeof module==='object'&&module.exports)module.exports=api;else root.ReferenceMotion=api;})(globalThis,function(performance){
  'use strict';
  const smoothstep=(a,b,x)=>{const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t);};
  const env=(u,a,b,c,d)=>smoothstep(a,b,u)*(1-smoothstep(c,d,u));
@@ -29,7 +29,7 @@
  // These preparation durations are Baijie demo adaptation, NOT ANIMS changes.
  const preparations={wake:{duration:1.6,sleep:2},rouse:{duration:1.2,sleep:1}};
  const catalog=Object.entries(labels).map(([id,label])=>Object.freeze({id,label,duration:scores[id].dur,...(preparations[id]?{prepareDuration:preparations[id].duration}:{}),automatic:!['peek','wake','rouse'].includes(id)}));
- const faceIds={neutral:'3942',smile:'3901',gentle:'3942',happy:'3901',enjoy:'3625',closed:'3625',yawn:'9001',troubled:'3751',shy:'3496',curious:'3831',surprised:'3791',sleepy:'3599'};
+ const faceIds={neutral:'3942',smile:'3901',gentle:'3942',happy:'3901',enjoy:'9005',closed:'3625',yawn:'9001',troubled:'3751',shy:'9002',curious:'3831',surprised:'3791',sleepy:'9006'};
  // Baijie presentation calibration, not upstream ANIMS constants. Preserve
  // source timing/phase/spring damping; amplify the weak channels at their
  // targets so downstream body, hair and cloth still react to real velocities.
@@ -37,8 +37,13 @@
  const tuning=Object.freeze({version:'i24-presence',gaze:1.5,roll:1.55,headShift:1.65,bodyFollow:1.5,bodySway:1.7,skirt:2.8,postureSquashGain:0.3,
   hairGain:Object.freeze({'outer-left':1,'outer-right':1,'front-left':1.65,'front-right':1.85,fringe:1.1}),
   hairLimit:Object.freeze({'outer-left':0.12,'outer-right':0.12,'front-left':0.20,'front-right':0.20,fringe:0.12})});
+ // Baijie's quieter distribution; retain the reference opportunity cadence.
+ const idleCooldowns=Object.freeze({hum:45,lookAround:35,stretch:90,sneeze:180,bounce:180,doze:180});
+ function idleWeights(affection,drowsy){
+  return [['lookAround',1.5],['hum',3],['stretch',1],['bounce',.3],['sneeze',.25],['doze',drowsy?4:0]];
+ }
  function createMotion({binding,idle=true,seed=17}){
-  const spring=()=>({x:0,v:0}),s={t:0,ax:spring(),ay:spring(),roll:spring(),bodyX:spring(),bodyRoll:spring(),headDX:spring(),headDY:spring(),skirt:spring(),squash:spring(),eyeClose:spring(),hair:Array.from({length:5},spring),hop:0,hopV:0};
+  const spring=()=>({x:0,v:0}),s={t:0,ax:spring(),ay:spring(),roll:spring(),bodyX:spring(),supportX:spring(),bodyRoll:spring(),headDX:spring(),headDY:spring(),skirt:spring(),squash:spring(),eyeClose:spring(),hair:Array.from({length:5},spring),hop:0,hopV:0};
   const stepSpring=(o,target,k,c,dt)=>{o.v+=(-(o.x-target)*k-o.v*c)*dt;o.x+=o.v*dt;};
   let rng=seed>>>0;const random=()=>{rng=(Math.imul(rng,1664525)+1013904223)>>>0;return rng/4294967296;},rand=(a,b)=>a+random()*(b-a);
   // Rest rhythm uses the same simulation clock, with its own seeded choices so
@@ -46,13 +51,24 @@
   let restRng=(seed^0x9e3779b9)>>>0;
   const restRand=(a,b)=>{restRng=(Math.imul(restRng,1664525)+1013904223)>>>0;return a+(b-a)*restRng/4294967296;};
   let breathPhase=.19,breathPeriod=4.2,inhale=.38,breathDepth=1,breath=.5;
-  let action=null,lastAction=null,completed=0,blocked=false,auto=idle,nextAction=10,nextIdle=4,look=null,idleFace='neutral';
+  let action=null,lastAction=null,completed=0,blocked=false,auto=idle, nextAction=10,look=null,idleFace='neutral';
+  const micro=performance.create({seed}),armSprings=Array.from({length:4},spring),restSupport=spring();
+  let microTarget=performance.targets(null,0);
+  let lastFull=null,resumeAt=0,recoveryDelay=0;const fullEnds={};
   let face=null,faceUntil=0,feedback=null,feedbackId=0,blinkStart=-1,nextBlink=2,doubleBlink=false,jumps=0;
   const impulses={};
-  // Reference DEFAULT_SETTINGS.sleepAfter=180; mouse tracking is intentionally
-  // absent here, so quiet time is reset by this character's own interactions.
-  let lastContact=0;
-  const drowsyEligible=()=>s.t-lastContact>180*0.4;
+  // Keep Chieri's 72-second drowsiness threshold, but desktop quiet time must
+  // also include keyboard/mouse use in other applications, not just pet taps.
+  let lastContact=0,systemQuietSince=null,nextDozeAt=0;
+  const quietFor=()=>Math.min(s.t-lastContact,systemQuietSince===null?Infinity:s.t-systemQuietSince);
+  const drowsyEligible=()=>quietFor()>180*0.4;
+  function setSystemIdle(seconds){
+   if(!Number.isFinite(seconds)||seconds<0)return;
+   systemQuietSince=s.t-seconds;
+   // Only an automatically selected doze responds to desktop activity.
+   // Release its targets through existing springs; keep manual previews intact.
+   if(seconds<180*0.4&&action?.name==='doze'&&action.automatic)cancel();
+  }
   let demo=[],demoNext=0;
   const headScale=binding.height/1536,widthScale=binding.width/1024;
   const hairSpecs=[['outer-left',70,true],['outer-right',80,true],['front-left',110,false],['front-right',120,false],['fringe',120,false]];
@@ -60,7 +76,7 @@
   // chains. Export the load separately: hair already includes head inertia.
   const breeze=(t,k)=>0.035*Math.sin(t*1.3+k*1.7)+0.02*Math.sin(t*2.9+k*0.6)+0.015*Math.sin(t*0.47);
   function setFace(sem,duration){face=sem;faceUntil=s.t+duration;}
-  function say(text,sem,duration){if(sem)setFace(sem,duration);feedback={id:'reference:'+ ++feedbackId,text,durationMs:3400,until:s.t+3.4};}
+  function say(text,sem,duration){if(sem)setFace(sem,duration);if(!action?.automatic)feedback={id:'reference:'+ ++feedbackId,text,durationMs:3400,until:s.t+3.4};}
   function cue(c){
    const [,kind,a,b,d]=c;
    if(kind==='face')setFace(a,b);
@@ -71,25 +87,32 @@
    else if(kind==='rouse')s.headDY.v-=50;
    else if(kind==='bounce'){s.hopV=300;s.squash.v+=1.2;}
   }
-  function play(name){
-   if(blocked||!Object.hasOwn(scores,name))return false;
-   demo=[];look=null;
-   action={name,start:s.t+(preparations[name]?.duration||0),fired:0,preparation:preparations[name]||null};lastAction=name;face=null;feedback=null;return true;
+  function finishAction(){if(action){lastFull=action.name;fullEnds[action.name]=s.t;action=null;}}
+  function play(name,automatic=false){
+   if(blocked||(name!=='care'&&!Object.hasOwn(scores,name)))return false;
+   finishAction();demo=[];look=null;micro.cancel(s.t);if(!automatic)micro.clearCare();
+   if(name==='care'){micro.playCare(s.t);lastAction=name;face=null;feedback=null;return true;}
+   action={name,automatic,start:s.t+(preparations[name]?.duration||0),fired:0,preparation:preparations[name]||null};lastAction=name;face=null;feedback=null;return true;
   }
   function playAll(){if(blocked)return false;play(catalog[0].id);demo=catalog.slice(1).map(a=>a.id);return true;}
   function clearPresentation(){face=null;feedback=null;}
-  function cancel(){const active=!!action;action=null;look=null;demo=[];clearPresentation();nextAction=s.t+rand(14,28);return active;}
-  function setBlocked(value){value=!!value;if(value===blocked)return;blocked=value;if(value){lastContact=s.t;look=null;}cancel();}
-  function setAuto(value){auto=!!value;if(!auto){look=null;cancel();}}
+  function cancel({discardCare=false}={}){const active=!!action||!!micro.snapshot(s.t);finishAction();look=null;micro.cancel(s.t);if(discardCare)micro.clearCare();demo=[];clearPresentation();return active;}
+  function setBlocked(value,delay=0){value=!!value;if(value)recoveryDelay=Math.max(recoveryDelay,delay);if(value===blocked)return;blocked=value;if(value){lastContact=s.t;look=null;}else{resumeAt=Math.max(resumeAt,s.t+recoveryDelay);recoveryDelay=0;}cancel();}
+  function setAuto(value){auto=!!value;if(!auto){look=null;cancel({discardCare:true});}}
+  function recordCare(kind){if(auto)return micro.recordCare(kind,s.t);return false;}
   function choose(){
-   // Chieri idleAnim includes lookAround. Keep the accepted score intact but
-   // use weight 1 (upstream 3): full turns punctuate the smaller idle moments.
    const affection=Math.max(0.1,0.3-s.t*0.002);
-   const pool=[['lookAround',1],['hum',2],['stretch',2],['peek',0],['bounce',1+affection*2],['sneeze',0.6],['doze',drowsyEligible()?4:0]];
-   let r=random()*pool.reduce((n,p)=>n+p[1],0);for(const [name,w]of pool)if((r-=w)<=0){play(name);break;}
+   const ended=micro.lastEnded();
+   const pool=idleWeights(affection,drowsyEligible()&&s.t>=nextDozeAt).filter(([name,w])=>w>0&&name!==lastFull&&s.t-(fullEnds[name]??-Infinity)>=(idleCooldowns[name]||0)&&!(ended&&s.t-ended.time<6&&(['attention','stance'].includes(ended.family)&&name==='hum'||ended.family==='attention'&&name==='lookAround')));
+   let r=random()*pool.reduce((n,p)=>n+p[1],0);for(const [name,w]of pool)if((r-=w)<=0){
+    play(name,true);
+    if(name==='doze')nextDozeAt=s.t+180;
+    break;
+   }
   }
-  function step(dt,isBlocked=false,pat=null){
+  function step(dt,isBlocked=false,pat=null,support=null){
    setBlocked(isBlocked);s.t+=dt;const t=s.t;
+   if(blocked)lastContact=t;
    // Same bounded breath channel as the reference; a longer exhale and small
    // cycle-to-cycle changes suit a standing human. Cycle changes happen at the
    // relaxed endpoint where both value and slope meet, never on menu actions.
@@ -97,33 +120,22 @@
    if(breathPhase>=1){breathPhase-=1;breathPeriod=restRand(3.8,4.8);inhale=restRand(.36,.42);breathDepth=restRand(.9,1);}
    breath=breathDepth*(breathPhase<inhale?smoothstep(0,inhale,breathPhase):1-smoothstep(inhale,1,breathPhase));
    if(!blocked&&!action&&demo.length&&t>=demoNext){const remaining=demo.slice(1);play(demo[0]);demo=remaining;}
-   if(auto&&!blocked&&!action&&t>=nextAction){choose();nextAction=t+rand(14,28);}
-   if(t>=nextIdle){
-    nextIdle=t+rand(4,8);
-    if(auto&&!blocked&&!action){
-     // Chieri idleTick: a short target, then back to the living base pose.
-     // Ear/tail opportunities become a head tilt or a resting weight shift;
-     // they are distinct gestures, not three offsets added to every glance.
-     const r=random(),side=restRand(0,1)<.5?-1:1;
-     look=null;
-     if(r<.22)look={x:side*restRand(.45,.7),y:restRand(-.18,.24),lean:0,tilt:0};
-     else if(r<.4)look={x:side*restRand(.16,.28),y:-.08,lean:0,tilt:side*restRand(.035,.055)};
-     else if(r<.55)look={x:side*restRand(.2,.35),y:.06,lean:side*restRand(.018,.03),tilt:-side*.012};
-     else if(r<.7)idleFace=['neutral','neutral','smile','gentle'][Math.floor(random()*4)];
-     if(look)look.until=t+restRand(1.5,3);
-    }
-   }
+   // Upstream advances the check deadline even if this opportunity is blocked.
+   // Action duration/cancellation must not add another full waiting interval.
+   microTarget=micro.step(t,auto&&!blocked&&t>=resumeAt&&!action&&!demo.length,!blocked&&!action&&!demo.length);
+   if(t>=nextAction){nextAction=t+rand(14,28);if(auto&&!blocked&&t>=resumeAt&&!action&&!micro.snapshot(t))choose();}
+   for(let i=0;i<4;i++)stepSpring(armSprings[i],microTarget.arms[i],55,15,dt);
+   stepSpring(restSupport,microTarget.lean,18,7,dt);
    let gx=0.15*Math.sin(t*0.37),gy=0.1*Math.sin(t*0.23+1);
    let rollT=-gx*0.05+0.02*Math.sin(t*0.5),hdx=0,hdy=0,A=null;
    // Contact blocks spontaneous choices, not the baseline breath/stance. A
    // held response must not switch the base to the authored-action waveform.
    const quiet=!action;
-   if(look&&t>=look.until)look=null;
-   const resting=quiet&&auto&&!blocked?look:null;
+   const resting=quiet&&(auto||micro.snapshot(t)?.automatic===false)&&!blocked?microTarget:null;
    if(quiet){
     // Retain upstream's continuous gaze/roll underneath the occasional
     // moments. All target changes, including expiry, use the same springs.
-    if(resting){gx=resting.x;gy=resting.y;}
+    if(resting){if(resting.focus!==undefined){gx+=(resting.x-gx)*resting.focus;gy+=(resting.y-gy)*resting.focus;}else{gx+=resting.x;gy+=resting.y;}}
     rollT=-gx*.05+(resting?.tilt||0)+.02*Math.sin(t*.5);
     // Chest breath is already in the material parent. A small delayed head
     // response goes through the original 120/14 spring, not a second bob.
@@ -138,7 +150,7 @@
      A=deep?{gx:.1,gy:.55,roll:.1+.02*Math.sin(t*.6)-rollT,eye:1}:{gy:gy+.25,eye:.45+.1*Math.sin(t*1.3)};
     }else{
      while(action.fired<a.cues.length&&a.cues[action.fired][0]<=u)cue(a.cues[action.fired++]);
-     if(u>a.dur){action=null;completed++;demoNext=t+1.2;nextAction=t+rand(14,28);}else A=a.f(u);
+     if(u>a.dur){const wasHum=action.name==='hum';finishAction();if(wasHum)setFace('smile',2.5);completed++;demoNext=t+1.2;}else A=a.f(u);
     }
    }
    if(A){if(A.gx!=null)gx=A.gx;if(A.gy!=null)gy=A.gy;rollT+=A.roll||0;hdx+=A.hdx||0;hdy+=A.hdy||0;}
@@ -147,14 +159,26 @@
    // Express acceptance through downward attitude, with only a small settle;
    // finger travel is a stroke, not a force pushing the head into the torso.
    if(pat){
-    hdy+=1.5;
-    hdx=2.5*Math.tanh(pat.x*.025/2.5);
-    rollT+=.025*Math.tanh(pat.x*.00045/.025);gy=.55;
+    // Hold a calm downward attitude, independent of finger direction and
+    // idle head sway. Existing springs preserve entry/release continuity;
+    // breathing and the independent hair breeze continue below.
+    gx=0;gy=.55;rollT=0;hdx=0;hdy=1.5;
    }
+   // A lifting leg transfers weight first. The same body/head springs drive
+   // hair inertia and cloth below; do not add an unrelated hair oscillator.
+   const supportLean=support?.lean||0,supportSwing=support?.swing||0;
+   if(!pat){rollT-=supportLean*.012;hdy+=Math.abs(supportLean)*.5;}
    stepSpring(s.ax,gx*tuning.gaze,55,13,dt);stepSpring(s.ay,gy*tuning.gaze,55,13,dt);stepSpring(s.roll,rollT*tuning.roll,45,11,dt);
    stepSpring(s.headDX,hdx*tuning.headShift,120,14,dt);stepSpring(s.headDY,hdy*tuning.headShift,120,14,dt);
-   const weight=.012*Math.sin(t*.8)+(resting?.lean||0);
-   stepSpring(s.bodyX,s.ax.x*0.45*tuning.bodyFollow,18,7,dt);stepSpring(s.bodyRoll,(-s.roll.x*0.25+weight-s.bodyX.x*0.015)*tuning.bodySway,18,7,dt);
+   const weight=.012*Math.sin(t*.8);
+   // Track the support contribution with the same spring as total bodyX.
+   // The idle counter-lean must use only the gaze/idle component: feeding
+   // footwear translation back into it cancelled most of the intended lean.
+   // bodyX/bodyRoll remain the actual shared parents for head, hair and cloth.
+   stepSpring(s.supportX,supportLean*2.4+restSupport.x*.9,18,7,dt);
+   stepSpring(s.bodyX,s.ax.x*0.45*tuning.bodyFollow+supportLean*2.4+restSupport.x*.9,18,7,dt);
+   const idleBodyX=s.bodyX.x-s.supportX.x;
+   stepSpring(s.bodyRoll,(-s.roll.x*0.25+weight-idleBodyX*0.015)*tuning.bodySway+supportLean*.065-supportSwing*.035+restSupport.x*.02,18,7,dt);
    for(let k=0;k<s.hair.length;k++){
     const h=s.hair[k],spec=hairSpecs[k],w=breeze(t,k);
     const gain=tuning.hairGain[spec[0]];
@@ -169,13 +193,13 @@
    // A.sq is an authored posture target, including the stretch inside wake.
    // Cue/landing velocity impulses above remain distinct from sustained pose.
    const squashTarget=(A&&A.sq||0)*tuning.postureSquashGain;
-   stepSpring(s.squash,squashTarget,260,11,dt);stepSpring(s.eyeClose,A&&A.eye!=null?A.eye:0,30,10,dt);
+   stepSpring(s.squash,squashTarget,260,11,dt);stepSpring(s.eyeClose,A&&A.eye!=null?A.eye:(microTarget.eye||0),30,10,dt);
    if(t>=nextBlink){blinkStart=t;nextBlink=t+0.17+(doubleBlink?0.12:rand(2.2,5.5));doubleBlink=!doubleBlink&&random()<0.18;}
   }
   function snapshot(){
    const bt=s.t-blinkStart,cl=Math.max(bt>=0&&bt<=0.17?Math.sin(Math.PI*bt/0.17):0,s.eyeClose.x);
    const preparing=action&&s.t<action.start,deep=preparing&&action.preparation.sleep===2;
-   const sem=preparing?(deep?'closed':'sleepy'):face&&s.t<faceUntil?face:idleFace;
+   const sem=preparing?(deep?'closed':'sleepy'):face&&s.t<faceUntil?face:microTarget.face||idleFace;
    const hair=Object.fromEntries(hairSpecs.map(([id],k)=>{const a=s.hair[k].x;return [id,[a*Math.pow(1/3,1.4),a*Math.pow(2/3,1.4),a]];}));
    const hairWind=Object.fromEntries(hairSpecs.map(([id],k)=>[id,breeze(s.t,k)]));
    // Chieri simulate() also loads rear locks from gaze velocity and direction.
@@ -183,13 +207,21 @@
    // while its moving parent already supplies head roll and linear inertia.
    const hairTurn=-s.ax.v*0.012-s.ax.x*0.02;
    return {motionSet:'qianhuili',idleAction:{name:action?.name||lastAction||'qianhuili',phase:blocked?'blocked':preparing?'preparing':action?'playing':'quiet',elapsed:action?Math.max(0,s.t-action.start):0,completed},
-    referenceMotion:{active:action?.name||null,...(action?.preparation?{phase:preparing?'preparing':'playing'}:{}),automatic:auto,drowsyEligible:drowsyEligible(),completed,jumps,demoRemaining:demo.length,impulses:{...impulses},tuning:tuning.version},face:faceIds[sem]||'3942',blink:Math.max(0,Math.min(1,cl)),
+    referenceMotion:{active:action?.name||null,actionAutomatic:!!action?.automatic,...(action?.preparation?{phase:preparing?'preparing':'playing'}:{}),automatic:auto,micro:micro.snapshot(s.t),care:micro.context(),resumeAt,lastFull,fullEnds:{...fullEnds},nextActionAt:nextAction,drowsyEligible:drowsyEligible(),completed,jumps,demoRemaining:demo.length,impulses:{...impulses},tuning:tuning.version},face:faceIds[sem]||'3942',blink:Math.max(0,Math.min(1,cl)),
     feedback:feedback&&s.t<feedback.until?{id:feedback.id,text:feedback.text,durationMs:feedback.durationMs}:null,
-    pose:{referenceMotion:true,lookX:s.ax.x,lookY:s.ay.x,headRoll:s.roll.x,headX:s.headDX.x*widthScale/binding.height,headY:s.headDY.x/1536,
+    pose:{referenceMotion:true,idleArms:{'arm-screen-left':armSprings.slice(0,2).map(v=>v.x),'arm-screen-right':armSprings.slice(2).map(v=>v.x)},lookX:s.ax.x,lookY:s.ay.x,headRoll:s.roll.x,headX:s.headDX.x*widthScale/binding.height,headY:s.headDY.x/1536,
      bodyRoll:s.bodyRoll.x,bodyX:s.bodyX.x*7*widthScale/binding.height,bodyY:0,breath,
      hair,hairWind,hairTurn,cloth:{'skirt-front':[s.skirt.x*widthScale*tuning.skirt,0],'skirt-right':[s.skirt.x*widthScale*tuning.skirt,0]},squash:s.squash.x,hop:s.hop*headScale/binding.height,compression:0}};
   }
-  return {step,snapshot,play,playAll,cancel,setBlocked,setAuto,clearPresentation};
+  // Chieri TAPS/headTap velocity impulses, adapted to the human neck and
+  // grounded full-body art. No cat channels or rubber-like whole-body squash.
+  function react(kind){
+   if(kind==='feet'){s.headDY.v+=20;s.roll.v+=.12;s.bodyRoll.v-=.10;}
+   else if(kind==='headTap')s.headDY.v+=35;
+   else if(kind==='belly'){s.headDY.v+=25;s.bodyRoll.v+=.22;s.skirt.v-=10;}
+   else if(kind==='leg'){s.bodyRoll.v-=.18;s.skirt.v-=16;}
+  }
+  return {step,snapshot,play,playAll,cancel,setBlocked,setAuto,setSystemIdle,clearPresentation,react,recordCare};
  }
- return {scores,catalog,createMotion,tuning};
+ return {scores,catalog,createMotion,tuning,idleWeights,idleCooldowns};
 });

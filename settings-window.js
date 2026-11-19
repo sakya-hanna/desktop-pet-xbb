@@ -3,7 +3,7 @@ const {create:createPanel}=require('./chat-panel.cjs');
 function publicSnapshot(store){
  const v=store.snapshot();
  if(!v||typeof v.baseUrl!=='string'||typeof v.model!=='string'||typeof v.keyConfigured!=='boolean'||!['valid','missing','invalid','unknown','read-error','decrypt-failure'].includes(v.loadStatus)||typeof v.writeBlocked!=='boolean'||v.writeBlocked!==!['valid','missing'].includes(v.loadStatus)||(v.notice!==null&&typeof v.notice!=='string'))throw Error('Invalid settings loader contract');
- return {baseUrl:v.baseUrl,model:v.model,keyConfigured:v.keyConfigured,loadStatus:v.loadStatus,writeBlocked:v.writeBlocked,notice:v.notice};
+ return {baseUrl:v.baseUrl,model:v.model,...(v.visionModel!==undefined?{visionModel:v.visionModel}:{}),keyConfigured:v.keyConfigured,loadStatus:v.loadStatus,writeBlocked:v.writeBlocked,notice:v.notice};
 }
 function create({BrowserWindow,ipcMain,session,root,mode,store,testConnection,onChange=()=>{},cancelTest=()=>{}}){
  publicSnapshot(store);let destroyed=false;
@@ -12,8 +12,9 @@ function create({BrowserWindow,ipcMain,session,root,mode,store,testConnection,on
   read:{arity:0,run:snapshot},
   save:{arity:1,run:payload=>{
    try{
-    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(k=>!['baseUrl','model','apiKey'].includes(k))||typeof payload.baseUrl!=='string'||typeof payload.model!=='string'||(Object.hasOwn(payload,'apiKey')&&typeof payload.apiKey!=='string'))throw Error();
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(k=>!['baseUrl','model','visionModel','apiKey'].includes(k))||typeof payload.baseUrl!=='string'||typeof payload.model!=='string'||(Object.hasOwn(payload,'apiKey')&&typeof payload.apiKey!=='string'))throw Error();
     onChange();cancelTest();const value={baseUrl:payload.baseUrl,model:payload.model};if(Object.hasOwn(payload,'apiKey'))value.apiKey=payload.apiKey;
+    if(Object.hasOwn(payload,'visionModel'))value.visionModel=payload.visionModel;
     store.save(value);return {ok:true,settings:snapshot()};
    }catch{return {ok:false,message:'保存失败，请检查配置和安全存储。',settings:snapshot()};}
   }},

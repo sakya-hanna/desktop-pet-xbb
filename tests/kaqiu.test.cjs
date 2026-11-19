@@ -64,3 +64,24 @@ test('reminder broker merges concurrent cards, restores live chat, and hides wit
  p.setEnabled(false);p.remind([{card:'miao',text:'不应补播'}]);p.setEnabled(true);
  assert.equal(calls.at(-1),null);p.destroy();assert.equal(clock.tasks.size,0);
 });
+
+test('enabled analyzer detection reaches start, ten-second warning and end bubbles',()=>{
+ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+ const {createKaqiu}=require('../kaqiu/integration.cjs'),{createPresentation}=require('../kaqiu/presentation.cjs');
+ const profileRoot=fs.mkdtempSync(path.join(os.tmpdir(),'baijie-analyzer-test-')),clock=fakeClock(),shown=[],configs=[];
+ const presentation=createPresentation({clock,window:{set:v=>shown.push(v),clear(){},setEnabled(){}}});
+ const service=createKaqiu({root:__dirname,profileRoot,mode:'hidden',clock,presentation,
+  bridgeFactory:()=>({start(){throw Error('No native input/capture in this test');},stop(){},clear(){},configure:v=>configs.push(v)})});
+ try{
+  service.setEnabled(true);
+  service.menu().submenu.find(m=>m.label==='卡牌提醒').submenu.find(m=>m.label.startsWith('分析仪')).click({checked:true});
+  assert.ok(configs.at(-1).cards.includes('analyzer'));
+  service.receive({type:'trigger',card:'analyzer'});
+  assert.match(shown.at(-1).text,/分析仪开始计时，50秒/);
+  clock.advance(39999);assert.equal(shown.length,1);clock.advance(1);
+  assert.match(shown.at(-1).text,/分析仪还剩10秒/);
+  clock.advance(10000);assert.match(shown.at(-1).text,/分析仪计时结束/);
+  assert.equal(service.snapshot().timers.length,0);
+ }finally{service.destroy();presentation.destroy();fs.rmSync(profileRoot,{recursive:true,force:true});}
+ assert.equal(clock.tasks.size,0);
+});

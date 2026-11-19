@@ -49,7 +49,7 @@ function configurePaths({ app, root = __dirname, profileRoot, mode = 'hidden', s
 
 /** Call BEFORE app.whenReady. Importing this module never imports Electron or starts a window. */
 async function boot({ electron, root = __dirname, profileRoot, mode = 'hidden', storageLayout = 'candidate', appDataRoot, env = process.env,
-  fsImpl = fs, createShellImpl = createShell, stateIO, clock, testPolicy, chatOptions } = {}) {
+  fsImpl = fs, createShellImpl = createShell, stateIO, clock, testPolicy, chatOptions, awarenessOptions } = {}) {
   if (!electron?.app) throw new TypeError('Explicit Electron dependency required');
   const { app, protocol } = electron;
   const paths = configurePaths({ app, root, profileRoot, mode, storageLayout, appDataRoot, env, fsImpl });
@@ -114,7 +114,7 @@ async function boot({ electron, root = __dirname, profileRoot, mode = 'hidden', 
     const session = createOwnedSession(electron.session);
     removePolicy = installPolicy({ session, root });
     removeResources = installResources({ protocol: session.protocol, root });
-    shell = createShellImpl({ electron, session, root, profileRoot: paths.profileRoot, mode, storageLayout, appDataRoot, stateIO, clock, testPolicy, onStartupFailure, chatOptions });
+    shell = createShellImpl({ electron, session, root, profileRoot: paths.profileRoot, mode, storageLayout, appDataRoot, stateIO, clock, testPolicy, onStartupFailure, chatOptions, awarenessOptions });
     const ready = shell.ready.then(window => {
       if (!destroyed) {
         shellLoaded = true;

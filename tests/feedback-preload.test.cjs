@@ -14,6 +14,14 @@ function preload(file, mainFrame = true) {
       contextBridge: { exposeInMainWorld(name, value) { api = value; } }, ipcRenderer }; } });
   return { calls, api, ipcRenderer };
 }
+test('system idle bridge delivers seconds and disposes its listener',()=>{
+  const {api,ipcRenderer}=preload('desktop-preload.cjs'),values=[];
+  const off=api.onSystemIdle(seconds=>values.push(seconds));
+  for(const value of [0,0,72,180,-1,NaN,Infinity,'0',null])ipcRenderer.emit('desktop:system-idle',{},value);
+  assert.deepEqual(values,[0,0,72,180]);
+  off(); assert.equal(ipcRenderer.listenerCount('desktop:system-idle'),0);
+});
+
 test('I9_feedback desktop bridge validates strict id/text/null and copies payload', () => {
   const { api, calls } = preload('desktop-preload.cjs');
   assert.equal(typeof api.feedback, 'function', 'pet.feedback must be a narrow bridge method');

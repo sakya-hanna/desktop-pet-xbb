@@ -19,7 +19,7 @@ test('I11 both hands and skirts hold through contact and recover after release w
   e.send({type:'grab-down',partId,pointerId:1});assert.equal(e.snapshot().expression??null,null);
   e.send({type:'grab-move',pointerId:1,x:8,y:0});const first=e.snapshot();
   assert.equal(first.expression.kind,partId.startsWith('arm-')?'hand':'skirt');
-  assert.equal(first.expression.semantic,partId.startsWith('arm-')?'shy':'awkward');
+  assert.equal(first.expression.semantic,'shy');
   tick(e,24);e.send({type:'grab-up',pointerId:1});
   assert.equal(e.snapshot().expression.phase,'recover');assert.equal(e.snapshot().expression.semantic,partId.startsWith('arm-')?'gentle':first.expression.semantic);
   assert.deepEqual(e.snapshot().feedback,first.feedback,'release does not speak again or change expiry');
@@ -45,7 +45,7 @@ test('I10 legacy head response smiles then enjoys without disturbing idle moveme
  e.send({type:'move',pointerId:1,x:0.6});
  for(let i=0;i<36;i++){e.advance(1/120);control.advance(1/120);}
  e.send({type:'up',pointerId:1});
- assert.equal(e.snapshot().expression.semantic,'smile');assert.equal(e.snapshot().bubble,'怎么突然模姐姐的头，是希望姐姐做什么呢。');
+ assert.equal(e.snapshot().expression.semantic,'smile');assert.equal(e.snapshot().bubble,'怎么突然摸姐姐的头，是希望姐姐做什么呢。');
  const id=e.snapshot().feedback.id;
  for(let i=0;i<300;i++){
   const state=e.advance(1/120),base=control.advance(1/120);
@@ -57,9 +57,9 @@ test('I10 legacy head response smiles then enjoys without disturbing idle moveme
 });
 test('I11 release starts its own brief recovery; snapshots cannot mutate internal response',()=>{
  const e=createDirector({idle:false});e.send({type:'grab-down',partId:'skirt-front',pointerId:1});e.send({type:'grab-move',pointerId:1,x:8,y:0});
- e.snapshot().expression.semantic='mutated';assert.equal(e.snapshot().expression.semantic,'awkward');
+ e.snapshot().expression.semantic='mutated';assert.equal(e.snapshot().expression.semantic,'shy');
  tick(e,228);e.send({type:'grab-up',pointerId:1});assert.equal(e.snapshot().expression.phase,'recover');
- tick(e,24);assert.equal(e.snapshot().expression.semantic,'pout','post-release hold does not inherit the old deadline');
+ tick(e,24);assert.equal(e.snapshot().expression.semantic,'hairPout','post-release hold does not inherit the old deadline');
  tick(e,60);assert.equal(e.snapshot().expression,null);
  e.clearFeedback();tick(e,120);assert.equal(e.snapshot().bubble,null);assert.equal(e.snapshot().expression,null);
 });

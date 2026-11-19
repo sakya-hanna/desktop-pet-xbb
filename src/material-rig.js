@@ -35,6 +35,7 @@
   }
   function grabOffset(pose,part,rest=null) {
     const grab=pose.grab?.[part?.name]||[0,0];
+    if(part?.name?.startsWith('arm-'))return grab.map((v,i)=>v+(pose.idleArms?.[part.name]?.[i]||0));
     if(!part||!['skirt-front','skirt-right'].includes(part.name))return grab.slice();
     // Two picking targets, one continuous garment. Both author meshes use the
     // same waist/fold/hem profile, so their shared edge must sample the SAME
@@ -122,17 +123,23 @@
     // Only the lower attached side-lock ends blend toward their fixed join.
     return 1-smooth(148,208,rest[1]);
   }
-  function layeredYaw(rest,t){
-    // Chieri Rig.deform: angleX * (13 * dome + 4), using Baijie's
-    // face dimensions. Skin, expression and painted cover sample one field.
-    return t.shift[0]+domeAt(rest,t)*t.depth[0];
+  function yawDepth(rest,t){
+    // A shared cross-section surface carries scalp, jaw, cover and expression.
+    // No per-eye islands: the large painted features sit on its gently curved
+    // front, while the temples and jaw recede. Only depth is baked; rotation
+    // is evaluated per pose. Existing nod depth remains unchanged.
+    const rows=t.yaw.sections;let i=0;
+    while(i<rows.length-2&&rest[1]>rows[i+1][0])i++;
+    const a=rows[i],b=rows[i+1],u=smooth(a[0],b[0],rest[1]);
+    const width=a[1]+(b[1]-a[1])*u,depth=a[2]+(b[2]-a[2])*u;
+    return depth*Math.exp(-t.yaw.roundness*((rest[0]-t.center[0])/width)**2);
   }
   // Like the reference Rig.weights: immutable mesh ownership is baked once.
   // Standalone point/inverse callers keep the original uncached calculation.
   function fixedFields(rest,binding,part=null){
     const t=binding.headTurn,b=binding.breathing;
     const depth=headDepth(rest,t);
-    const layered=t?.model==='layered-reference-dome',kind=materialKind(part);
+    const layered=t?.model==='layered-head-volume',kind=materialKind(part);
     const shared=layered&&binding.headSupport&&(kind==='head'||['torso','neck'].includes(part?.material));
     // Chieri uses the same head/neck fade on both pieces of a split lock.
     // Keep the full face above the jaw; carry the attached hair and upper
@@ -143,7 +150,7 @@
     // apply a second fade to the dome: that would squeeze the lower face twice.
     const domeOwned=shared||kind==='head';
     return {kind,head,support:binding.neckTransition?.verticalSupport||0,faceDepth:domeOwned?depth:0,
-      yaw:layered?(domeOwned?layeredYaw(rest,t):t.shift[0]):0,
+      yaw:layered?yawDepth(rest,t):0,
       body:1-smooth(...binding.bodyFade,rest[1]),referenceBody:1-smooth(...binding.referenceBodyFade,rest[1]),turn:t,depth,
       upper:b?1-smooth(...b.upper,rest[1]):0,expand:b?smooth(b.expand[0],b.expand[1],rest[1])*(1-smooth(b.expand[2],b.expand[3],rest[1])):0};
   }
@@ -156,30 +163,40 @@
   function frameFields(pose,binding){
     let bindings=poseFrames.get(pose);if(!bindings){bindings=new WeakMap();poseFrames.set(pose,bindings);}
     if(bindings.has(binding))return bindings.get(binding);
-    const t=binding.headTurn;
+    const t=binding.headTurn,angle=(pose.lookX||0)/(t?.controlGain||1)*(t?.yaw?.angle||0);
     const frame={shift:pose.referenceMotion?[4*binding.width/1024,3*binding.height/1536]:t?.shift,
       amplitude:pose.referenceMotion?[13*binding.width/1024,10*binding.height/1536]:t?.depth,
+      yawCos:Math.cos(angle),yawSin:Math.sin(angle),
       headCos:Math.cos(pose.headRoll||0),headSin:Math.sin(pose.headRoll||0),
       bodyCos:Math.cos(pose.bodyRoll||0),bodySin:Math.sin(pose.bodyRoll||0),grabs:new Map()};
     bindings.set(binding,frame);return frame;
   }
   function parentPoint(local, rest, pose, binding, fixed=null,part=null) {
     let [x, y] = local;
+    if(part?.material==='head'&&pose.cheekPress){
+      const {point:[cx,cy],strength}=pose.cheekPress;
+      const distance=((rest[0]-cx)/17)**2+((rest[1]-cy)/13)**2;
+      const weight=(1-smooth(0,1,distance))*strength;
+      x+=(binding.neck[0]>cx?1:-1)*1.8*weight;
+      y+=weight;
+    }
     const height = binding.height,frame=fixed?.frame||frameFields(pose,binding);
-    const layered=binding.headTurn?.model==='layered-reference-dome';
+    const layered=binding.headTurn?.model==='layered-head-volume';
     // Both cached mesh vertices and inverse/picking callers use this same
     // material field, including the side hair retained in the torso texture.
     if(layered&&!fixed)fixed=fixedFields(rest,binding,part);
-    const kind=fixed?.kind||materialKind(part);
     const verticalSupport=(pose.headY||0)*height*(fixed?fixed.support:(binding.neckTransition?.verticalSupport||0));
     const head = fixed?fixed.head:layered?layeredWeight(rest,binding,part):headWeight(rest,binding);
     const body = fixed?(pose.referenceMotion?fixed.referenceBody:fixed.body):1 - smooth(...(pose.referenceMotion?binding.referenceBodyFade:binding.bodyFade), rest[1]);
     if(head&&binding.headTurn&&(pose.lookX||pose.lookY)){
       const t=binding.headTurn,f=frame||frameFields(pose,binding),depth=fixed?fixed.depth:headDepth(rest,t);
       if(layered){
-        const yaw=fixed?fixed.yaw:kind==='head'?layeredYaw(rest,t):t.shift[0];
-        x+=(pose.lookX||0)/t.controlGain*yaw*head;
-        // Split source pixels share dome depth as well as rotation/shift.
+        // Project the SAME rest-space volume about its vertical axis. Freeze
+        // this surface offset at rest, as for ownership: local 2D cloth/hair
+        // spring offsets retain their lengths and the picking inverse stays
+        // affine. Skin/face/cover and attached roots share the projection.
+        x+=((rest[0]-t.center[0])*(f.yawCos-1)+fixed.yaw*f.yawSin)*head;
+        // Keep the existing vertical nod shared across split source pixels.
         y+=(pose.lookY||0)*(f.shift[1]+f.amplitude[1]*fixed.faceDepth)*head;
       }else{
         x+=(pose.lookX||0)*(f.shift[0]+f.amplitude[0]*depth)*head;
@@ -329,7 +346,38 @@
     return part?.backParallax&&pose.lookX
       ?[local[0]-pose.lookX*5*binding.width/1024*weight,local[1]]:local;
   }
+  // Chieri's loose-strand smooth(0.1, max(0.3, caughtS), s).
+  // Keep the authored attachment fade as well, including the rear locks.
+  function hairPullWeight(part,rest,contact){
+    return smooth(part.rootLockY,part.rootBlendY,rest[1])*smooth(.1,Math.max(.3,arcPosition(contact,part.centerline)),arcPosition(rest,part.centerline));
+  }
   function deformPoint(rest, pose, binding, part, weights=null, fixed=null) {
+    const base=baseDeformPoint(rest,pose,binding,part,weights,fixed);
+    if(!part?.longHair)return base;
+    const offset=[0,0],contact=pose.hairContacts?.[part.name];
+    const add=(at,delta)=>{const w=hairPullWeight(part,rest,at);for(let i=0;i<2;i++)offset[i]+=w*(delta?.[i]||0);};
+    if(contact)add(contact,pose.grab?.[part.name]);
+    for(const old of pose.hairRecoil||[])if(old.partId===part.name)add(old.point,old.offset);
+    if(!offset.some(Boolean))return base;
+    const anchor=parentPoint(part.root,part.root,pose,binding,null,part);
+    const shifted=parentPoint(part.root.map((v,i)=>v+offset[i]),part.root,pose,binding,null,part);
+    return base.map((v,i)=>v+shifted[i]-anchor[i]);
+  }
+  function baseDeformPoint(rest, pose, binding, part, weights=null, fixed=null) {
+    if(part?.legSide){
+      const f=pose.feet?.legs?.[part.legSide]||{};
+      const rotate=(p,pivot,angle)=>{const c=Math.cos(angle),s=Math.sin(angle),dx=p[0]-pivot[0],dy=p[1]-pivot[1];return [pivot[0]+dx*c-dy*s,pivot[1]+dx*s+dy*c];};
+      // Distal-to-proximal articulation carries the ankle with the knee and
+      // the knee with the hip. Weights stay in rest space, including footwear.
+      let local=rest.slice();
+      local=rotate(local,part.ankle,(f.ankle||0)*smooth(part.ankle[1]-15,part.ankle[1]+25,rest[1]));
+      local=rotate(local,part.knee,(f.angle||0)*smooth(480,570,rest[1]));
+      local=rotate(local,part.hip,(f.hip||0)*smooth(480,525,rest[1]));
+      local[1]-=(f.lift||0)*smooth(480,570,rest[1]);
+      if(part.footwear&&f.drop){local[0]+=(part.legSide==='left'?-10:10)*f.drop;local[1]+=24*f.drop;}
+      return parentPoint(local,rest,pose,binding,fixed,part);
+    }
+
     if(part?.followPart&&pose.flexHair?.[part.followPart.name]){
       const normal=parentPoint(localPoint(rest,pose,part,weights,fixed),rest,pose,binding,fixed),base=parentPoint(rest,rest,pose,binding,fixed),follow=deformPoint(rest,pose,binding,part.followPart,null,fixed);
       return normal.map((v,i)=>v+follow[i]-base[i]);
@@ -380,7 +428,7 @@
       for(let i=0;i<mesh.rest.length;i+=2){const rest=[mesh.rest[i],mesh.rest[i+1]],weights=mesh.weights?.subarray(i/2*3,i/2*3+3);fixed.points.push({rest,fields:{...fixedFields(rest,binding,part),local:localFields(rest,part,weights),frame:null},weights});}
       preparedMeshes.set(mesh,fixed);
     }
-    const output=new Float32Array(mesh.rest.length),frame=frameFields(pose,binding),surface=part?.material&&!part.centerline;
+    const output=new Float32Array(mesh.rest.length),frame=frameFields(pose,binding),surface=part?.material&&!part.centerline&&!part.legSide;
     for(let i=0;i<fixed.points.length;i++){const p=fixed.points[i];p.fields.frame=frame;
       output.set(surface?parentPoint(p.rest,p.rest,pose,binding,p.fields,part):deformPoint(p.rest,pose,binding,part,p.weights,p.fields),i*2);
     }
@@ -532,5 +580,5 @@
     // Old lining weights are retained for provenance, but no local grab owns it.
     return {id:source.part,target,texture:{...t},mesh:{rest,uv,weights,indices}};
   }
-  return { createFlexibleHair, createLongHairDynamics, deformPoint, makeMesh, deformMesh, localPoint, grabInfluence, grabOffset, authoredMesh, unparentPoint, importRightHandMeshes, importSkirtMesh };
+  return { hairPullWeight, createFlexibleHair, createLongHairDynamics, deformPoint, makeMesh, deformMesh, localPoint, grabInfluence, grabOffset, authoredMesh, unparentPoint, importRightHandMeshes, importSkirtMesh };
 });

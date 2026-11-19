@@ -5,7 +5,7 @@ const {createHarness}=require('./helpers/interaction-fixtures.cjs');
 const tick=(e,n)=>{for(let i=0;i<n;i++)e.advance(1/120);};
 const start=(e,partId,pointerId=1)=>{e.send({type:'grab-down',partId,pointerId});e.send({type:'grab-move',pointerId,x:8,y:0});};
 for(const partId of ['arm-screen-left','arm-screen-right','skirt-front','skirt-right'])test('I11 '+partId+' holds through drag and briefly after release without renewing speech',()=>{
- const e=createDirector({idle:false});start(e,partId);const first=e.snapshot(),semantic=partId.startsWith('arm-')?'smile':'pout';
+ const e=createDirector({idle:false});start(e,partId);const first=e.snapshot(),semantic=partId.startsWith('arm-')?'smile':'hairPout';
  for(let i=0;i<720;i++){if(i%20===0)e.send({type:'grab-move',pointerId:1,x:i%40?8:-8,y:0});e.advance(1/120);}
  assert.equal(e.snapshot().expression?.semantic,semantic,'held expression must survive original fixed timeout');
  assert.equal(e.snapshot().expression.id,first.expression.id);assert.equal(e.snapshot().bubble,null,'speech must still expire');

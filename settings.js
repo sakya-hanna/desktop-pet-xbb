@@ -2,12 +2,13 @@
 (() => {
   const element = id => document.getElementById(id);
   const form = element('settings-form'), baseUrl = element('base-url'), model = element('model');
+  const visionModel = element('vision-model');
   const key = element('api-key'), remove = element('remove-key'), indicator = element('key-status');
   const save = element('save'), test = element('test'), status = element('status'), notice = element('store-notice');
   let busy = true, writeBlocked = false;
   function setBusy(value) {
     busy = value;
-    for (const control of [baseUrl,model,key,remove,save,test]) control.disabled = busy || writeBlocked;
+    for (const control of [baseUrl,model,visionModel,key,remove,save,test]) control.disabled = busy || writeBlocked;
     key.disabled = busy || writeBlocked || remove.checked;
   }
   function protection(value) {
@@ -22,6 +23,7 @@
     protection(value);
     baseUrl.value = value.baseUrl;
     model.value = value.model;
+    visionModel.value = value.visionModel || '';
     indicator.textContent = value.keyConfigured ? '已配置密钥' : '未配置密钥';
     // Only the boolean is consumed; never assign any returned credential to DOM.
     key.value = ''; remove.checked = false;
@@ -42,6 +44,7 @@
     event.preventDefault();
     if (busy || writeBlocked) return;
     const value = {baseUrl:baseUrl.value.trim(), model:model.value.trim()};
+    value.visionModel=visionModel.value.trim();
     if (remove.checked) value.apiKey = '';
     else if (key.value !== '') value.apiKey = key.value;
     setBusy(true); status.textContent = '正在保存…';

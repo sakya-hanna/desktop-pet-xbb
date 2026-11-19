@@ -31,7 +31,7 @@ async function createHarness(options={}){
  options.configurePet?.(pet);
  const context=vm.createContext({console:options.bootstrap?{...console,error:(...messages)=>errors.push(messages.join(' '))}:console,window:win,document:doc,Image,Uint8Array,Float32Array,Uint32Array,Map,Set,
   fetch:async url=>{if(url==='assets/manifest.json')return {ok:true,json:async()=>meta};if(url.endsWith('.mesh.json')&&(options.failMesh===true||options.failMesh===url.slice('assets/'.length)))return {ok:false,status:404};let json=JSON.parse(fs.readFileSync(path.join(root,url)));if(url.endsWith('.mesh.json')&&options.mutateMesh)options.mutateMesh(json);return {ok:true,json:async()=>json};},
-  CharacterBinding:require('../../src/character.js'),MaterialRig:require('../../src/material-rig.js'),MaterialHit:require('../../src/hit-test.js'),PreviewView:require('../../src/view.js'),DesktopView:require('../../src/desktop-view.js'),MotionDirector:require('../../src/director.js'),
+  CharacterBinding:require('../../src/character.js'),MaterialRig:require('../../src/material-rig.js'),MaterialHit:require('../../src/hit-test.js'),PreviewView:require('../../src/view.js'),DesktopView:require('../../src/desktop-view.js'),MotionDirector:require('../../src/director.js'),BaijieWander:require('../../src/wander.js'),
   requestAnimationFrame:f=>{const id=++next;raf.set(id,f);return id;},cancelAnimationFrame:id=>raf.delete(id),
  });
  vm.runInContext(fs.readFileSync(path.join(root,'src/character-renderer.js'),'utf8'),context);

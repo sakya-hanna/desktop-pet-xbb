@@ -25,8 +25,8 @@ function* poses(){
   const d=createDirector({idleAction:'qianhuili',seed});
   for(let i=0;i<1080;i++){const p=d.advance(1/120).pose;if(i%12===0)yield {name:'idle-moment-'+seed,time:i/120,p};}
  }
- for(const name of ['lookAround','hum','stretch','doze','wake']){
-  const spec=catalog.find(s=>s.id===name),d=createDirector({idleAction:'qianhuili',idle:false,seed:17});
+ for(const name of ['care','lookAround','hum','stretch','doze','wake']){
+  const spec=name==='care'?{duration:4.4}:catalog.find(s=>s.id===name),d=createDirector({idleAction:'qianhuili',idle:false,seed:17});
   for(let i=0;i<360;i++)d.advance(1/120);
   assert.equal(d.playAction(name),true,name+' must start before geometry sampling');
   const steps=Math.ceil((spec.duration+(spec.prepareDuration||0)+1.2)*120);
@@ -52,7 +52,7 @@ test('actual head and neck meshes remain valid through shared poses and retained
 
     }
    }
-   for(const part of Object.values(parts)){const a=rig.deformPoint(part.root,p,binding,part),b=rig.deformPoint(part.root,p,binding,part.followPart||materials.head);rootGap=Math.max(rootGap,Math.hypot(a[0]-b[0],a[1]-b[1]));}
+   for(const part of Object.values(parts).filter(part=>part.root)){const a=rig.deformPoint(part.root,p,binding,part),b=rig.deformPoint(part.root,p,binding,part.followPart||materials.head);rootGap=Math.max(rootGap,Math.hypot(a[0]-b[0],a[1]-b[1]));}
  }
  assert.ok(rootGap<1e-7,'head/follower root gap '+rootGap);
  console.log('LAYERED_HEAD_GEOMETRY '+JSON.stringify({samples,min,max,minEdge,maxEdge,worst,rootGap,triangles:meshes.map(x=>({name:x.name,count:x.tris.length}))}));

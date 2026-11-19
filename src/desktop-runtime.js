@@ -4,14 +4,21 @@
   else root.DesktopRuntime = api;
 })(globalThis, function(root) {
   'use strict';
-  const faces = new Set(['3901', '3942', '3599', '3831', '3711', '3751', '3791', '3496', '3665', '3563', '3625', '9001', '9002', '9003']);
-  const motions = new Set(['hum','stretch','sneeze','peek','doze','bounce','wake','rouse','lookAround','all','stop']);
+  const faces = new Set(['3901', '3942', '3599', '3831', '3711', '3751', '3791', '3496', '3665', '3563', '3625', '9001', '9002', '9003', '9004', '9005', '9006']);
+  const motions = new Set(['hum','stretch','sneeze','peek','doze','bounce','wake','rouse','lookAround','care','all','stop']);
+  const blushByFace={'9002':.38,'9003':.22,'9004':.20,'9005':.18};
 
   function attach(options) {
     const {canvas, toolbar, renderer, pet, onError, onState} = options;
     const win = root.window, doc = root.document;
+    const idleSeed=Number.isFinite(options.seed)?options.seed:(Math.random()*0x100000000)>>>0;
     const buttons = Object.fromEntries(['grip', 'smaller', 'larger', 'menu', 'hop', 'hide'].map(id => [id, toolbar.querySelector('#' + id)]));
+    const fx = root.BaijieFX?.create(doc.querySelector('#fx'),renderer);
+    const touchKinds = ['head','cheek','chest','belly','leg','body','feet'];
+    const tapKinds = touchKinds.slice(1);
+    let cursor = null, cursorTime = 0, gazeX = 0, gazeY = 0, blush = 0;
     let engine = null, running = false, destroyed = false, destroying = false;
+    let systemIdleSeconds = null;
     let raf = null, epoch = 0, last = null, renderedFrames = 0, renderedFace = null;
     let activePointer = null, lastInputTrusted = null;
     let grabContact = null;
@@ -22,8 +29,57 @@
     let pendingMotion = null;
     let lastFeedback = null, feedbackSequence = 0;
     let chatPresentation = null, chatHighWater = 0;
+    let companionMotion=false;
+    function companionEvent(phase,reason){
+      if(typeof pet.awarenessEvent==='function')invoke('awarenessEvent',[phase,reason]);
+    }
+    function clearPresentation(reason='presentation-replaced'){
+      if(chatPresentation?.kind==='companion')companionEvent('response-ended',reason);
+      chatPresentation=null;
+      if(companionMotion){
+        companionMotion=false;
+        engine?.cancelIdleAction();
+        engine?.setAutomatic(idleEnabled);
+      }
+    }
+    let awarenessHighWater=0,lastAwarenessBusy=null;
+    function awarenessBusy(includeCompanion=true){
+      const s=engine?.snapshot();
+      const chat=currentChat();
+      return !inputEnabled()||held||shellHidden||visibilityPaused||activePointer!==null||!!(chat&&(includeCompanion||chat.kind!=='companion'))||
+        !!s?.feedback||!!s?.expression||!!s?.pose.feet?.active||!!wander?.snapshot()||shellState.reminderActive===true;
+    }
+    function syncAwareness(){
+      // Our own accepted bubble must not cancel its delivery/cooldown handshake.
+      const value=awarenessBusy(false);
+      if(value!==lastAwarenessBusy&&typeof pet.awarenessBusy==='function'){lastAwarenessBusy=value;invoke('awarenessBusy',[value]);}
+    }
+    function presentAwareness(value){
+      if(!value||!Number.isSafeInteger(value.id)||value.id<=awarenessHighWater||typeof value.text!=='string'||!value.text.trim()||[...value.text].length>100)return;
+      awarenessHighWater=value.id;
+      let accepted=!awarenessBusy();
+      if(accepted){
+        // Pause spontaneous choices, not the explicit care score. Its existing
+        // head/body springs still drive the long hair and cloth.
+        engine.setAutomatic(false);
+        engine.setIdleBlocked(false);
+        companionMotion=engine.playAction('care');
+        accepted=companionMotion;
+        if(!accepted)engine.setAutomatic(idleEnabled);
+      }
+      if(typeof pet.awarenessResult==='function')invoke('awarenessResult',[value.id,accepted]);
+      if(!accepted)return;
+      const showAt=engine.snapshot().time+1.45;
+      chatPresentation={id:'awareness:'+value.id,text:value.text,face:'3901',kind:'companion',showAt,durationMs:5000,until:showAt+5};
+      companionEvent('gesture-started');
+      render();notify();
+    }
+    const wander = root.BaijieWander && renderer.walkSpec && typeof pet.walk==='function'
+      ? root.BaijieWander.create({send:value=>invoke('walk',[value]),...renderer.walkSpec}) : null;
+    let pendingWalk=false;
+    function stopWalk(){wander?.cancel();pendingWalk=false;}
     function currentChat() {
-      if (chatPresentation && engine && engine.snapshot().time >= chatPresentation.until) chatPresentation = null;
+      if (chatPresentation && engine && engine.snapshot().time >= chatPresentation.until) clearPresentation('completed');
       return chatPresentation;
     }
     function presentChat(value) {
@@ -35,11 +91,13 @@
           || !(value.face === null || Number.isInteger(value.face)) || !['none','blink','hop'].includes(value.action)) return;
       chatHighWater = value.id;
       if (clear) {
-        if (chatPresentation) {chatPresentation = null; if (engine) render();}
+        if (chatPresentation) {clearPresentation('chat-clear'); if (engine) render();}
         return;
       }
       // Consume dropped replies; they cannot reappear after a later resume.
       if (!inputEnabled() || activePointer !== null || held || shellHidden || visibilityPaused) return;
+      stopWalk();
+      clearPresentation();
       engine.clearFeedback();
       engine.setIdleBlocked(true);
       const durationMs = Math.min(15000, Math.max(3400, 1800 + Math.min([...value.reply].length,180)*70));
@@ -59,7 +117,8 @@
       // interaction. New responses play, then return to the selected face.
       const newerInteraction = state.expression && state.expression.id !== manualExpressionId;
       const manualVisible = manualFace !== 'auto' && !newerInteraction;
-      const target = manualVisible ? manualFace : (chat?.face ?? state.expression?.face ?? state.face);
+      const chatFace=chat?.kind==='companion'&&state.time<chat.showAt?null:chat?.face;
+      const target = manualVisible ? manualFace : (chatFace ?? state.expression?.face ?? state.face);
       if (immediate || faceTarget === null) {
         faceMix = [{face: target, weight: 1}]; faceFrom = faceMix; faceTarget = target; faceStarted = state.time;
       } else {
@@ -179,14 +238,18 @@
     function cancel(reason, {contactOnly = false} = {}) {
       const generation = epoch;
       if (destroyed) return false;
+      if(!contactOnly)stopWalk();
       // Global/lifecycle callers also own released recoil. Pointer-event callers
       // must pass their ownership gate before reaching this control path.
       const clearedFace=!contactOnly && !!engine && (!!engine.snapshot().expression || expressionVisible || faceMix.length>1);
       const clearedIdle=!contactOnly&&engine&&(activePointer!==null||!['pointer-leave','window-leave','window-pointer-leave','window-out'].includes(reason))?engine.cancelIdleAction():false;
-      if (!contactOnly) {chatPresentation = null; engine?.clearFeedback();}
+      if (!contactOnly) {
+        clearPresentation(reason); engine?.clearFeedback();engine?.cancelFeet();
+        cursorTime=0;gazeX=0;gazeY=0;blush=0;fx?.clear();
+      }
       const clearedGrab=engine?engine.cancelGrab():false;
       syncFeedback();
-      if (activePointer !== null && ['head','chest'].includes(pointerKind) && engine) engine.send({type: 'cancel', pointerId: activePointer, reason});
+      if (activePointer !== null && touchKinds.includes(pointerKind) && engine) engine.send({type: 'cancel', pointerId: activePointer, reason});
       clearPointer(); // Clear ownership before release delivers lostpointercapture.
       if (destroyed || generation !== epoch) return false;
       // Stop/hide/destroy have no next RAF. Restore only the local limb now,
@@ -224,14 +287,22 @@
       if(!mapped||!(hit.influence>0.05)){cancel('stale-grab-frame');return;}
       engine.send({type:'grab-move',pointerId:activePointer,x:(mapped.point[0]-hit.materialPoint[0])/hit.influence,y:(mapped.point[1]-hit.materialPoint[1])/hit.influence});
     }
+    function sampleCursor(x,y) {
+      if(!inputEnabled()||activePointer!==null||![x,y].every(Number.isFinite))return;
+      if(!cursor||Math.hypot(x-cursor.x,y-cursor.y)>=2){
+        cursor={x,y};
+        cursorTime=.85;
+      }
+    }
     function remember(event) {
       const point = local(event);
+      if(typeof pet.onCursor!=='function'&&(!event.pointerType||event.pointerType==='mouse'))sampleCursor(event.clientX,event.clientY);
       pointerPosition = point && point.inside ? {clientX: event.clientX, clientY: event.clientY, screenX: event.screenX, screenY: event.screenY} : null;
       updateInteractive();
     }
-    function validChestPoint(event) {
+    function validTouchPoint(event) {
       return touchContact && Math.hypot(event.clientX-touchContact[0],event.clientY-touchContact[1])<=4
-        && renderer.hitPart(event.clientX,event.clientY)?.partId==='chest';
+        && renderer.hitPart(event.clientX,event.clientY)?.partId===pointerKind;
     }
     function updateInteractive() {
       let next = false;
@@ -272,7 +343,7 @@
     }
 
     function status() {
-      return {running, destroyed, renderedFrames, renderedFace, motion: engine ? engine.snapshot() : null,
+      return {running, destroyed, renderedFrames, renderedFace, motion: engine ? engine.snapshot() : null, walk:wander?.snapshot()||null,
         activePointer, pointerKind, dragging: pointerKind === 'drag', interactive, pointerPosition: pointerPosition ? {...pointerPosition} : null,
         lastInputTrusted, errors: errors.slice(), cancelReasons: cancelReasons.slice(),
         chatPresentation: currentChat() ? {...chatPresentation} : null,
@@ -282,14 +353,16 @@
       wanted = false; halt('render-error'); report(error);
     }
     function syncFeedback() {
-      const next = currentChat() || engine?.snapshot().feedback || null;
+      const chat=currentChat(),state=engine?.snapshot();
+      const next = (chat?.kind==='companion'&&state.time<chat.showAt?null:chat) || state?.feedback || null;
       if (next?.id === lastFeedback?.id && next?.text === lastFeedback?.text && next?.kind === lastFeedback?.kind) return;
       lastFeedback = next;
+      if(next?.kind==='companion')companionEvent('bubble-sent');
       // Transport ids belong to this runtime, not a director that idle toggles
       // may replace. The main process deduplicates these monotonic identities.
       if (typeof pet.feedback === 'function') invoke('feedback', [next ? {id: ++feedbackSequence, text: next.text, ...(next.kind === 'chat' ? {kind:'chat'} : {}), ...(next.durationMs !== undefined ? {durationMs: next.durationMs} : {})} : null]);
     }
-    function render(immediateFace = false) {
+    function render(immediateFace = false, dt = 0) {
       // Paused face controls may draw, but a cancelled lifecycle may not.
       const generation = epoch;
       if (destroyed) return;
@@ -297,8 +370,36 @@
         checkGrabViewport();
         if (destroyed || generation !== epoch) return;
         const state = engine.snapshot(), face = updateFace(state, immediateFace);
-        renderer.render(state.pose, face, false, state.blink, false, faceMix);
+        const pose={...state.pose,walk:wander?.snapshot()};
+        cursorTime=Math.max(0,cursorTime-dt);
+        const ease=1-Math.exp(-9*dt);
+        let x=0,y=0;
+        if(cursorTime>0&&shellState.followEnabled!==false&&inputEnabled()&&activePointer===null
+          &&!currentChat()&&!state.expression&&!state.referenceMotion?.active&&!state.referenceMotion?.micro
+          &&!shellState.reminderActive&&!pose.walk&&!pose.feet?.active&&!pose.hop){
+          const r=canvas.getBoundingClientRect(),binding=root.CharacterBinding.binding;
+          const camera=root.PreviewView.cameraFor(r.width,r.height,false,binding);
+          const center=binding.headTurn.center;
+          const headX=r.x+(center[0]-camera.x)/camera.w*r.width,headY=r.y+(center[1]-camera.y)/camera.h*r.height;
+          const reach=Math.max(90,r.height*.45);
+          x=.32*Math.tanh((cursor.x-headX)/reach);
+          y=.17*Math.tanh((cursor.y-headY)/reach);
+        }
+        // Cursor attention is applied only at draw time. The director's body,
+        // skirt and hair springs consume the original authored motion.
+        gazeX+=(x-gazeX)*ease;gazeY+=(y-gazeY)*ease;
+        if(activePointer===null&&shellState.followEnabled!==false){
+          if(Math.abs(gazeX)>.001)pose.lookX+=gazeX;
+          if(Math.abs(gazeY)>.001)pose.lookY+=gazeY;
+        }
+        const fxEnabled=shellState.fxEnabled!==false&&!pose.walk;
+        const blushTarget=pointerKind==='cheek'?.38:faceMix.reduce((sum,item)=>sum+item.weight*(blushByFace[item.face]||0),0);
+        blush+=(blushTarget-blush)*ease;
+        if(fxEnabled&&blush>.002)pose.blush=blush;
+        renderer.render(pose, face, false, state.blink, false, faceMix);
+        fx?.update(state,fxEnabled);
         syncFeedback();
+        syncAwareness();
         renderedFace = face; renderedFrames++; updateInteractive();
       } catch (error) {failRender(error);}
     }
@@ -315,22 +416,33 @@
           // Pointer-up/lost-capture/blur remain the contact's end signals;
           // Uncaptured contacts still clear. Released motion has no input owner
           // to lose: advance it with the director's existing bounded timestep.
+          const touchCaptured=touchKinds.includes(pointerKind)&&activePointer!==null&&canvas.hasPointerCapture(activePointer);
           const headCaptured=pointerKind==='head'&&activePointer!==null&&canvas.hasPointerCapture(activePointer);
           const grabCaptured=(pointerKind==='grab'||pointerKind==='grab-pending')&&activePointer!==null&&canvas.hasPointerCapture(activePointer);
-          if (dt > 0.25 && activePointer !== null && !headCaptured && !grabCaptured && !ownsCapturedDrag()) cancel('long-frame', {contactOnly: true});
+          if (dt > 0.25 && activePointer !== null && !touchCaptured && !grabCaptured && !ownsCapturedDrag()) cancel('long-frame', {contactOnly: true});
           if (!running || destroyed || generation !== epoch) return;
           updateGrabTarget();
           if (!running || destroyed || generation !== epoch) return;
-          engine.setIdleBlocked(activePointer!==null||!!currentChat());
-          engine.advance(dt,{headCaptured,grabCaptured});
-          render();
+          const state=engine.snapshot(),feet=state.pose.feet;
+          const chat=currentChat(),companion=chat?.kind==='companion';
+          const externalBlock=activePointer!==null||shellState.clickThrough===true||shellState.reminderActive===true;
+          const blocked=externalBlock||!!chat;
+          const busy=!!state.referenceMotion?.active||!!state.referenceMotion?.micro||!!state.feedback||!!state.expression||feet?.active||feet?.bare?.left||feet?.bare?.right||state.pose.hop>0.0001;
+          if(pendingWalk&&!blocked&&!busy){pendingWalk=false;wander?.start(shellState.bounds,shellState.workArea);}
+          wander?.advance(dt,{blocked,busy,bounds:shellState.bounds,area:shellState.workArea});
+          engine.setIdleBlocked(externalBlock||!!(chat&&!companion)||!!wander?.snapshot(),chat||shellState.reminderActive===true?4:0);
+          engine.advance(dt,{headCaptured,grabCaptured,touchCaptured});
+          render(false,Math.min(dt,.1));
           if (!destroyed && generation === epoch) schedule();
         } catch (error) {wanted = false; halt('frame-error'); report(error);}
       });
     }
     function resume() {
       if (destroyed || destroying || running || !wanted || held || shellHidden || visibilityPaused) return;
-      if (!engine) engine = root.MotionDirector.createDirector({idle: idleEnabled, seed: 17, idleAction:'qianhuili', responseConfig: options.responseConfig});
+      if (!engine) {
+        engine = root.MotionDirector.createDirector({idle: idleEnabled, seed: idleSeed, idleAction:'qianhuili', responseConfig: options.responseConfig});
+        if (systemIdleSeconds !== null) engine.setSystemIdle(systemIdleSeconds);
+      }
       running = true; last = null;
       if (pendingHop) {pendingHop = false; if (inputEnabled()) engine.send({type: 'jump'});}
       if (pendingBlink) {pendingBlink = false; if (inputEnabled()) engine.send({type: 'blink'});}
@@ -370,7 +482,7 @@
       if (destroyed || generation !== epoch) return;
       idleEnabled = enabled; last = null;
       if (engine) {
-        if (!engine.setAutomatic?.(idleEnabled)) engine = root.MotionDirector.createDirector({idle: idleEnabled, seed: 17, idleAction:'qianhuili', responseConfig: options.responseConfig});
+        if (!engine.setAutomatic?.(idleEnabled)) engine = root.MotionDirector.createDirector({idle: idleEnabled, seed: idleSeed, idleAction:'qianhuili', responseConfig: options.responseConfig});
         render();
       }
     }
@@ -382,6 +494,11 @@
       if (destroyed || generation !== epoch) return;
       // Keep the shell state separate from motion; no second animation owner.
       shellState = copyShell({...shellState, ...state});
+      if(shellState.followEnabled===false){cursorTime=0;gazeX=0;gazeY=0;}
+      if(shellState.fxEnabled===false)fx?.clear();
+      if(typeof state.wanderEnabled==='boolean')wander?.setEnabled(state.wanderEnabled);
+      if(state.reminderActive===true){stopWalk();if(chatPresentation?.kind==='companion')clearPresentation();}
+      if(wander?.snapshot()&&state.bounds&&state.bounds.height!==canvas.getBoundingClientRect().height)stopWalk();
       if (state.clickThrough === true) cancel('explicit-click-through');
       if (destroyed || generation !== epoch) return;
       if (typeof state.idleEnabled === 'boolean') setIdle(state.idleEnabled);
@@ -397,18 +514,25 @@
     }
     function startMotion(name) {
       if(!engine||activePointer!==null||currentChat())return false;
+      stopWalk();
       engine.setIdleBlocked(false);
       if(name==='stop'){engine.cancelIdleAction();return true;}
       return name==='all'?engine.playAll():engine.playAction(name);
     }
     function action(name) {
       if (typeof name !== 'string') return;
+      if(name==='walk:now'){
+        if(wander&&!shellHidden&&!visibilityPaused&&shellState.clickThrough!==true){
+          engine?.cancelIdleAction();engine?.clearFeedback();pendingWalk=true;
+        }
+        return;
+      }
       if (name==='toolbar:toggle') {
         cancel('toolbar-toggle');toolbar.hidden=!toolbar.hidden;updateInteractive();notify();return;
       }
       if(name.startsWith('motion:')&&motions.has(name.slice(7))){
         if(activePointer!==null||shellHidden||visibilityPaused||shellState.clickThrough===true)return;
-        invoke('command',['chat-cancel']);chatPresentation=null;
+        invoke('command',['chat-cancel']);clearPresentation();
         if(wanted&&held)pendingMotion=name.slice(7);
         else if(inputEnabled()){startMotion(name.slice(7));render();}
         notify();return;
@@ -443,6 +567,7 @@
         if (inputEnabled() && activePointer === null) engine.send({type:'blink'});
         else if (wanted && held && !shellHidden && !visibilityPaused && shellState.clickThrough !== true) pendingBlink=true;
       } else if (name === 'hop') {
+        stopWalk();
         if (inputEnabled() && activePointer === null) engine.send({type: 'jump'});
         else if (wanted && held && !shellHidden && !visibilityPaused && shellState.clickThrough !== true) pendingHop = true;
       } else return;
@@ -453,6 +578,10 @@
       if (!validDown(event) || onToolbar(event)) return;
       const point = local(event);
       if (!point || !point.inside) return;
+      if(wander?.snapshot()){
+        if(!renderer.hitOpaque(event.clientX,event.clientY))return;
+        stopWalk();render();
+      }
       if (event.ctrlKey && !event.altKey && !event.metaKey) {
         if (!renderer.hitOpaque(event.clientX,event.clientY)) return;
         if (!event.shiftKey && ![event.screenX,event.screenY].every(Number.isFinite)) return;
@@ -463,23 +592,19 @@
         return;
       }
       const hit = renderer.hitPart ? renderer.hitPart(event.clientX, event.clientY) : null;
-      if (['arm-screen-left','arm-screen-right','skirt-front','skirt-right'].includes(hit?.partId) && Object.hasOwn(root.CharacterBinding.grabs,hit.partId)) {
+      if (hit?.partId && Object.hasOwn(root.CharacterBinding.grabs,hit.partId)) {
         const mapped = renderer.clientToMaterial(event.clientX,event.clientY,hit);
         if (!mapped || !engine.send({type:'grab-down',pointerId:event.pointerId,partId:hit.partId,materialPoint:hit.materialPoint})) return;
-        chatPresentation=null;invoke('command',['chat-cancel']);
+        clearPresentation();invoke('command',['chat-cancel']);
         grabContact={hit,css:[event.clientX,event.clientY],pointer:[event.clientX,event.clientY]};
         if (!capture(event,canvas,'grab-pending')) return;
         syncFeedback();
         event.preventDefault();return;
       }
-      if (renderer.hitPart ? !['head','chest'].includes(hit?.partId) : !renderer.hitTest(event.clientX,event.clientY)) {
-        if (!hit || hit.partId !== null || !renderer.hitOpaque(event.clientX,event.clientY)) return;
-        chatPresentation=null;engine.clearFeedback();invoke('command',['chat-cancel']);
-        if(capture(event,canvas,'face')){syncFeedback();event.preventDefault();}return;
-      }
+      if (!touchKinds.includes(hit?.partId)) return;
       const kind=hit?.partId||'head';
-      if (!engine.send({type: 'down', partId: kind, pointerId: event.pointerId, x: normalizedX(point), y: normalizedY(point)})) return;
-      chatPresentation=null;invoke('command',['chat-cancel']);
+      if (!engine.send({type: 'down', partId: kind, materialPoint:hit?.materialPoint, pointerId: event.pointerId, x: normalizedX(point), y: normalizedY(point)})) return;
+      clearPresentation();invoke('command',['chat-cancel']);
       touchContact=[event.clientX,event.clientY];
       if (!capture(event, canvas, kind)) return;
       syncFeedback();
@@ -514,8 +639,7 @@
         syncFeedback();
         remember(event);return;
       }
-      if (pointerKind === 'chest' && !validChestPoint(event)) {cancel('chest-moved');return;}
-      if (pointerKind === 'face' && !pointerTap) {cancel('face-moved');return;}
+      if (tapKinds.includes(pointerKind) && !validTouchPoint(event)) {cancel('touch-moved');return;}
       if (pointerKind === 'head') engine.send({type: 'move', pointerId: event.pointerId, x: normalizedX(point), y: normalizedY(point)});
       remember(event);
     });
@@ -526,16 +650,11 @@
       if (!point || (!point.inside && !ownsCapturedGrab() && !ownsCapturedDrag())) {cancel('released-outside'); return;}
       if (event.button !== 0) {if ((event.buttons & 1) === 0) cancel('primary-button-lost'); return;}
       lastInputTrusted = event.isTrusted === true;
-      if (pointerKind === 'chest' && !validChestPoint(event)) {cancel('chest-release-outside');return;}
-      // Head/hand/skirt contacts belong to interaction, even below the drag
-      // threshold. Only unassigned body clicks are an explicit face cycle.
-      const cycle=pointerTap&&pointerKind==='face'
-        &&engine.snapshot().time-pointerTap.time<=0.35&&Math.hypot(event.clientX-pointerTap.x,event.clientY-pointerTap.y)<=4;
-      if (pointerKind === 'head' || pointerKind === 'chest') engine.send({type: 'up', pointerId: activePointer});
+      if (tapKinds.includes(pointerKind) && !validTouchPoint(event)) {cancel('touch-release-outside');return;}
+      if (touchKinds.includes(pointerKind)) engine.send({type:'up',pointerId:activePointer});
       if (pointerKind === 'grab' || pointerKind === 'grab-pending') engine.send({type:'grab-up',pointerId:activePointer});
       syncFeedback();
       clearPointer(); remember(event);
-      if(cycle)action('face-next');
     });
     listen(canvas,'dblclick',event=>{
       if (!inputEnabled() || event.button!==0 || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
@@ -622,13 +741,12 @@
       event.preventDefault(); lastInputTrusted = event.isTrusted === true;
       const factor = Math.max(0.8, Math.min(1.25, Math.exp(Math.max(-1000, Math.min(1000, delta)) * 0.0012)));
       const anchor = bar ? {x: 0.5, y: 0} : {x: point.x / point.r.width, y: point.y / point.r.height};
-      remember(event); invoke('resizeBy', [factor, anchor]); updateInteractive();
+      stopWalk();render();remember(event); invoke('resizeBy', [factor, anchor]); updateInteractive();
     }, {passive: false});
     listen(win,'keydown',event=>{
       if(!inputEnabled()||activePointer!==null||event.repeat||event.isComposing||event.ctrlKey||event.altKey||event.metaKey||event.shiftKey
         ||event.target?.isContentEditable||['INPUT','TEXTAREA','SELECT','BUTTON'].includes(event.target?.tagName)||toolbar.contains(event.target))return;
       if(event.key===' '){event.preventDefault();action('blink');}
-      else if(/^[0-9]$/.test(event.key)){const face=[...faces][event.key==='0'?9:Number(event.key)-1];if(face){event.preventDefault();action('face:'+face);}}
     });
     listen(win, 'blur', () => cancel('window-blur'));
     listen(win, 'resize', checkGrabViewport);
@@ -644,14 +762,20 @@
     });
     subscribe('onAction', action);
     subscribe('onState', applyState);
+    if (typeof pet.onSystemIdle === 'function') subscribe('onSystemIdle', seconds => {
+      systemIdleSeconds = seconds;
+      engine?.setSystemIdle(seconds);
+    });
     if (typeof pet.onCursor === 'function') subscribe('onCursor', point => {
       // Polling only restores hover/alpha ownership. Real button events still
       // own all gestures, and a captured drag must not be changed by polling.
       if (activePointer !== null || !point || ![point.x,point.y].every(Number.isFinite)) return;
+      sampleCursor(point.x,point.y);
       pointerPosition={clientX:point.x,clientY:point.y};
       updateInteractive();
     });
     if (typeof pet.onChatPresentation === 'function') subscribe('onChatPresentation', presentChat);
+    if (typeof pet.onAwareness === 'function') subscribe('onAwareness',presentAwareness);
     updateInteractive();
     return {start, stop, status, destroy};
   }

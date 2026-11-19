@@ -4,6 +4,7 @@
   // Baijie materials. These are spatial bindings, not a second action engine.
   const materials={head:{name:'head-surface',material:'head'},
     torso:{name:'torso',material:'torso'},neck:{name:'neck-skin',material:'neck'}};
+  const cheeks={left:[268.5,112],right:[323.5,112]};
   const binding={width:530,height:800,feetY:798,neck:[298.2,154],hips:[265,448],headFade:[140,175],bodyFade:[360,795],referenceBodyFade:[360,540],
     // Retain this character's jaw/skin ownership and vertical nod support.
     // Only the local neck/collar connection shares the head field; shoulders
@@ -12,11 +13,14 @@
     // the lower skin boundary. This avoids concentrating roll in a short strip.
     neckTransition:{version:'reference-side-jaw',top:120,base:160,skinHalf:36,outerHalf:64,hairFade:[135,200],verticalSupport:0.65,
       jaw:{top:144,base:166,inner:16,outer:40}},
-    // One Chieri-style dome over the actual face, ending at the jaw. The old
-    // 180px-tall dome carried the chin almost as far as the nose; eye islands
-    // then flattened the remaining turn. No separate eye/scalp correction.
-    headTurn:{version:'reference-turn-v4',model:'layered-reference-dome',controlGain:1.5,
+    // Small yaw of one curved head surface, including scalp and jaw. The
+    // previous face-centred dome displaced the features but left the skull
+    // behind. Keep the accepted vertical nod field independent of this yaw.
+    headTurn:{version:'head-volume-v5',model:'layered-head-volume',controlGain:1.5,
       center:[298.2,99],radius:[64,56],shift:[2.2,3*800/1536],depth:[10.5,10*800/1536],
+      // [height, half-width, front depth] in material pixels, from crown to
+      // neck. This is an authored shallow volume, not reconstructed side art.
+      yaw:{angle:.25,roundness:.22,sections:[[0,72,10],[25,76,28],[65,72,39],[100,64,40],[125,48,36],[145,20,25],[178,18,0]]},
       // Skin and collar are separate textures but one anatomical connection.
       // Share this field across their cut; shoulders remain outside it.
       neckFade:[139,166],neckWidth:[17,30]},
@@ -61,6 +65,7 @@
   // This short painted curl belongs to the right main lock, not the torso.
   // Keep its existing local tip motion and receiving-shadow assets.
   parts['front-right'].followPart=parts['rear-right'];
+  for(const side of ['left','right'])parts['leg-'+side]={name:'leg-'+side,material:'torso',legSide:side,hip:side==='left'?[250,480]:[344,480],knee:side==='left'?[235,548]:[345,551],ankle:side==='left'?[216,710]:[340,725]};
   const hair=(a,b,c)=>({'outer-left':[a,b,c],'outer-right':[a*0.85,b*0.9,c*0.85],fringe:[a*0.7,b*0.65,c*0.6],'front-left':[a,b*1.2,c*1.1],'front-right':[a*0.8,b,c]});
   // Tune the action before deformation. The head still inherits the full torso
   // transform; no y-dependent counter-motion through shoulder/chest skin.
@@ -82,6 +87,10 @@
     'arm-screen-right':{name:'arm-screen-right',screenSide:'right',characterSide:'left',thresholdCss:5,limit:[24,18],elbowRatio:0.4,sourceCanvas:[2612,3941]},
     'skirt-front':{name:'skirt-front',thresholdCss:5,limit:[18,14],foldRatio:0.5,sourceCanvas:[2612,3941]},
     'skirt-right':{name:'skirt-right',thresholdCss:5,limit:[18,14],foldRatio:0.5,sourceCanvas:[2612,3941]}};
+  // Chieri loose-lock drag; 30 material pixels suit Baijie's long locks.
+  for(const part of Object.values(parts).filter(p=>p.longHair)){
+    grabs[part.name]={...part,hairGrab:true,thresholdCss:4,limit:[30,30]};
+  }
   // Interaction-only tuning. Existing grab envelopes and authored poses stay intact.
   // With the real hips transform, positive roll moves the upper torso RIGHT.
   // These are initial visible envelopes, not GPU or artwork certification.
@@ -126,5 +135,18 @@
     smile:[3.05,5.65],blinks:[0.4,3.05],
     cloth:{stiffness:38,damping:8,roll:55,angular:20,linear:140,vertical:45}
   };
-  return {binding,parts,materials,keyframes,grabs,coupling,headMotion,idleAction,idleHair};
+  // Rest-space regions are queried only after topmost texture alpha ownership.
+  function touchRegion(point,part){
+    const [x,y]=point,ellipse=(cx,cy,rx,ry)=>((x-cx)/rx)**2+((y-cy)/ry)**2<=1;
+    if(part===materials.head&&Object.values(cheeks).some(([cx,cy])=>ellipse(cx,cy,14,10)))return 'cheek';
+    if(ellipse(298.2,95,82,82))return 'head';
+    if(!part||part===materials.torso||part.legSide){
+      if(ellipse(295,222,45,25))return 'chest';
+      if(ellipse(292,279,43,29))return 'belly';
+      if(y>=(x<285?700:720))return 'feet';
+      if(y>=490)return 'leg';
+    }
+    return 'body';
+  }
+  return {touchRegion,binding,parts,materials,cheeks,keyframes,grabs,coupling,headMotion,idleAction,idleHair};
 });

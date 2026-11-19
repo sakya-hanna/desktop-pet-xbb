@@ -3,39 +3,27 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {createDirector}=require('../src/director.js'),rig=require('../src/material-rig.js'),ch=require('../src/character.js');
 const make=()=>createDirector({idleAction:'qianhuili',idle:false,seed:17});
 const tick=(d,n)=>{for(let i=0;i<n;i++)d.advance(1/120);return d.snapshot();};
-test('head stroke drives both directions while held, keeps the feet and releases without resetting head or hair',()=>{
- for(const side of [-1,1]){
-  const d=make(),base=make();tick(d,240);tick(base,240);
-  for(const e of [d,base])e.send({type:'down',partId:'head',pointerId:1,x:.56,y:.12});
-  tick(d,30);tick(base,30);
-  assert.equal(d.snapshot().headStroke.active,false);assert.deepEqual(d.snapshot().pose,base.snapshot().pose,'stationary contact must not drag head');
-  d.send({type:'move',pointerId:1,x:.56+side*.09,y:.15});
-  const samples=[];
-  for(let i=0;i<240;i++){
-   const s=d.advance(1/120),b=base.advance(1/120);samples.push({s,b});
-   assert.deepEqual(rig.deformPoint([265,798],s.pose,ch.binding,ch.materials.torso),rig.deformPoint([265,798],b.pose,ch.binding,ch.materials.torso));
-  }
-  const held=d.snapshot(),b=base.snapshot();assert.equal(held.headStroke.active,true);
-  assert.equal(held.expression.kind,'head');assert.equal(held.expression.phase,'hold');
-  assert.ok((held.pose.headRoll-b.pose.headRoll)*side>.02&&(held.pose.headRoll-b.pose.headRoll)*side<.04,'head follows softly without a wide neck tilt');
-  assert.ok((held.pose.headX-b.pose.headX)*side>.001&&(held.pose.headX-b.pose.headX)*side<.003,'head follows with a small lateral shift');
-  assert.ok(held.pose.lookY-b.pose.lookY>.15,'soft downward gaze');
-  for(const part of Object.values(ch.parts).filter(p=>p.flexible)){
-   const movement=samples.map(({s,b})=>Math.hypot(...rig.deformPoint(part.centerline.at(-1),s.pose,ch.binding,part).map((v,i)=>v-rig.deformPoint(part.centerline.at(-1),b.pose,ch.binding,part)[i])));
-   assert.ok(Math.max(...movement)>3,'long hair never follows '+part.name);
-   assert.ok(samples.some(({s,b})=>Math.abs(s.pose.flexHair[part.name].angles.at(-1)-b.pose.flexHair[part.name].angles.at(-1))>.015),'hair must bend, not merely translate '+part.name);
-  }
-  const feedback=held.feedback.id;d.send({type:'up',pointerId:1});base.send({type:'up',pointerId:1});
-  assert.deepEqual(d.snapshot().pose,held.pose,'release must not reset head or hair');assert.equal(d.snapshot().feedback.id,feedback,'no duplicate line');
-  assert.equal(d.snapshot().expression.phase,'recover');
-  tick(d,120);tick(base,120);
-  assert.ok(Math.abs(d.snapshot().pose.headRoll-base.snapshot().pose.headRoll)<.001);
-  assert.ok(Object.keys(d.snapshot().pose.flexHair).some(id=>Math.abs(d.snapshot().pose.flexHair[id].angles.at(-1)-base.snapshot().pose.flexHair[id].angles.at(-1))>.002),'hair must continue after the head returns');
-  tick(d,1080);tick(base,1080);
-  assert.equal(d.snapshot().expression,null);assert.equal(d.snapshot().headStroke,undefined);
-  for(const id of Object.keys(d.snapshot().pose.flexHair))assert.ok(Math.abs(d.snapshot().pose.flexHair[id].angles.at(-1)-base.snapshot().pose.flexHair[id].angles.at(-1))<.002,'hair did not settle '+id);
+test('head stroke holds a nod despite direction changes and releases without resetting head or hair',()=>{
+ const d=make(),other=make();tick(d,240);tick(other,240);
+ for(const e of [d,other])e.send({type:'down',partId:'head',pointerId:1,x:.56,y:.12});
+ tick(d,30);tick(other,30);assert.equal(d.snapshot().headStroke.active,false);
+ d.send({type:'move',pointerId:1,x:.65,y:.15});other.send({type:'move',pointerId:1,x:.47,y:.08});
+ const foot=rig.deformPoint([265,798],d.snapshot().pose,ch.binding,ch.materials.torso),hair=[];
+ for(let i=0;i<360;i++){
+  d.send({type:'move',pointerId:1,x:.56+.09*Math.sin(i*.12),y:.12+.04*Math.cos(i*.12)});
+  const s=d.advance(1/120),b=other.advance(1/120);assert.deepEqual(s.pose,b.pose,'finger travel must not drive the pose');
+  assert.deepEqual(rig.deformPoint([265,798],s.pose,ch.binding,ch.materials.torso),foot);
+  hair.push(s.pose.flexHair[Object.keys(s.pose.flexHair)[0]].angles.at(-1));
  }
+ const held=d.snapshot();assert.equal(held.expression.phase,'hold');assert.ok(held.pose.lookY>.6);
+ assert.ok(Math.abs(held.pose.headRoll)<1e-4);assert.ok(Math.abs(held.pose.headX)<1e-7);
+ assert.ok(Math.max(...hair)-Math.min(...hair)>.002,'natural hair motion should continue');
+ const feedback=held.feedback.id;d.send({type:'up',pointerId:1});
+ assert.deepEqual(d.snapshot().pose,held.pose,'release must not reset head or hair');assert.equal(d.snapshot().feedback.id,feedback);
+ assert.equal(d.snapshot().expression.phase,'recover');tick(d,1200);
+ assert.equal(d.snapshot().expression,null);assert.equal(d.snapshot().headStroke,undefined);
 });
+
 test('vertical strokes count, foreign cancellation is ignored and cancelled strokes never revive',()=>{
  const d=make();tick(d,240);d.send({type:'down',partId:'head',pointerId:1,x:.56,y:.12});tick(d,30);
  d.send({type:'move',pointerId:1,x:.56,y:.16});tick(d,60);assert.equal(d.snapshot().headStroke.active,true);

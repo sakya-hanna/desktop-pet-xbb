@@ -17,6 +17,9 @@
       <input id="base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" maxlength="2048" required disabled>
       <label for="model">模型名称</label>
       <input id="model" type="text" placeholder="填写服务提供的模型 ID" autocomplete="off" maxlength="200" required disabled>
+      <label for="vision-model">识图模型（屏幕陪伴）</label>
+      <input id="vision-model" type="text" placeholder="留空沿用聊天模型，须支持图片" autocomplete="off" maxlength="200" disabled>
+      <p class="hint">启用屏幕陪伴后，会发送 Codex 或 ChatGPT 宿主窗口的图像，判断是否在 Codex 工作。截图不保存、不写入聊天记录；与聊天共用接口地址和密钥。</p>
       <div class="label-row"><label for="api-key">API 密钥</label><span id="key-status">读取中…</span></div>
       <input id="api-key" type="password" placeholder="留空保留已有密钥" autocomplete="new-password" maxlength="4096" aria-describedby="key-help" disabled>
       <p id="key-help" class="hint">留空不会删除已有密钥。填写新密钥后点击保存以替换。</p>

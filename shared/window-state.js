@@ -15,13 +15,19 @@ function validState(state) {
     && ['width', 'height'].every(key => Number.isInteger(b[key]) && b[key] >= 64 && b[key] <= 4096)
     && typeof state.size === 'string' && (state.size === 'custom' || Object.hasOwn(SIZE_PRESETS, state.size))
     && typeof state.alwaysOnTop === 'boolean'
-    && (!Object.hasOwn(state,'idleEnabled') || typeof state.idleEnabled === 'boolean'));
+    && (!Object.hasOwn(state,'idleEnabled') || typeof state.idleEnabled === 'boolean')
+    && (!Object.hasOwn(state,'wanderEnabled') || typeof state.wanderEnabled === 'boolean')
+    && (!Object.hasOwn(state,'followEnabled') || typeof state.followEnabled === 'boolean')
+    && (!Object.hasOwn(state,'fxEnabled') || typeof state.fxEnabled === 'boolean'));
 }
 
 function snapshot(state) {
   const { x, y, width, height } = state.bounds;
   return { bounds: { x, y, width, height }, size: state.size, alwaysOnTop: state.alwaysOnTop,
-    ...(Object.hasOwn(state,'idleEnabled') ? {idleEnabled:state.idleEnabled} : {}) };
+    ...(Object.hasOwn(state,'idleEnabled') ? {idleEnabled:state.idleEnabled} : {}),
+    ...(Object.hasOwn(state,'wanderEnabled') ? {wanderEnabled:state.wanderEnabled} : {}),
+    ...(Object.hasOwn(state,'followEnabled') ? {followEnabled:state.followEnabled} : {}),
+    ...(Object.hasOwn(state,'fxEnabled') ? {fxEnabled:state.fxEnabled} : {}) };
 }
 
 function loadStateResult(file, { fsImpl = fs } = {}) {

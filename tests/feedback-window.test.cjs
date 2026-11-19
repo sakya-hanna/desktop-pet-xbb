@@ -3,6 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { harness, settle, root, FEEDBACK } = require('./feedback-shell.test.cjs');
 const path = require('node:path');
+const {speechHeadBounds}=require('../shared/speech-layout.js');
+function outsideHead(a,b){return outside(a,speechHeadBounds(b));}
 function outside(a, b) { return a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y; }
 
 for (const mode of ['hidden', 'visible']) test(`I9_feedback ${mode}: passive window placement, scaling, topmost, navigation and cleanup`, async () => {
@@ -18,10 +20,10 @@ for (const mode of ['hidden', 'visible']) test(`I9_feedback ${mode}: passive win
     assert.deepEqual(b.calls.find(c => c[0] === 'ignore'), ['ignore', true, { forward: true }]);
     assert.equal(b.calls.some(c => c[0] === 'show' || c[0] === 'focus'), false);
     assert.equal(b.calls.some(c => c[0] === 'showInactive'), mode === 'visible');
-    assert.ok(outside(b.bounds, h.shell.window.bounds));
+    assert.ok(outsideHead(b.bounds, h.shell.window.bounds));
     const old = b.getBounds(); h.shell.drag({ dx: -250, dy: -200 });
-    assert.notDeepEqual(b.bounds, old); assert.ok(outside(b.bounds, h.shell.window.bounds));
-    h.shell.resizeBy(1.2); assert.ok(outside(b.bounds, h.shell.window.bounds));
+    assert.notDeepEqual(b.bounds, old); assert.ok(outsideHead(b.bounds, h.shell.window.bounds));
+    h.shell.resizeBy(1.2); assert.ok(outsideHead(b.bounds, h.shell.window.bounds));
     h.shell.setTopmost(false); assert.equal(b.top, false);
     for (const name of ['will-navigate', 'will-frame-navigate', 'will-redirect', 'will-attach-webview']) {
       let prevented = false; b.webContents.emit(name, { preventDefault() { prevented = true; } }); assert.equal(prevented, true, name);

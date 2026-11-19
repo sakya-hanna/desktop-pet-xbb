@@ -14,7 +14,7 @@ const number = (value, min, max) => typeof value === 'number' && Number.isFinite
 const ENTRY_URL = 'baijie28://app/desktop.html';
 const SHORTCUT = 'Control+Alt+Shift+B';
 
-function createShell({ electron, session, root, profileRoot, mode = 'hidden', storageLayout = 'candidate', appDataRoot, testPolicy, stateIO = windowState, clock = globalThis, onStartupFailure, chatOptions, character = require('./assets/manifest.json').character }) {
+function createShell({ electron, session, root, profileRoot, mode = 'hidden', storageLayout = 'candidate', appDataRoot, testPolicy, stateIO = windowState, clock = globalThis, onStartupFailure, chatOptions, awarenessOptions, character = require('./assets/manifest.json').character }) {
   if (!['hidden', 'visible'].includes(mode)) throw new TypeError('Invalid mode');
   if (testPolicy !== undefined && (mode !== 'hidden' || !keys(testPolicy, ['rescueAvailable']) || typeof testPolicy.rescueAvailable !== 'boolean')) throw new TypeError('Test rescue is hidden-only');
   profileRoot = validateProfile({ root, profileRoot, mode, storageLayout, appDataRoot });
@@ -29,7 +29,7 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     if (!keys(loadResult, ['status', 'value', 'reason'])) throw new Error();
     const { status, value, reason } = loadResult;
     if (status === 'valid') {
-      if (reason !== null || !keys(value, ['bounds', 'size', 'alwaysOnTop'], ['idleEnabled'])
+      if (reason !== null || !keys(value, ['bounds', 'size', 'alwaysOnTop'], ['idleEnabled','wanderEnabled','followEnabled','fxEnabled'])
         || !keys(value.bounds, ['x', 'y', 'width', 'height']) || !windowState.validState(value)) throw new Error();
     } else if (value !== null || (status === 'invalid' ? !['json', 'schema'].includes(reason)
       : !['missing', 'unsupported-version', 'read-error'].includes(status) || reason !== null)) throw new Error();
@@ -44,8 +44,10 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     : defaultBounds(screen.getAllDisplays(), screen.getPrimaryDisplay());
   let cachedBounds = bounds, size = saved?.size || 'medium', destroyed = false;
   let alwaysOnTop = saved?.alwaysOnTop ?? true, idleEnabled = saved?.idleEnabled ?? true;
+  let wanderEnabled = saved?.wanderEnabled ?? true, walking = null, walkHigh = 0;
+  let followEnabled = saved?.followEnabled ?? true, fxEnabled = saved?.fxEnabled ?? true;
   let saveTimer = null, lastSaved = null, menuDepth = 0, trayMenu = null, topmostTimer = null;
-  let cursorTimer = null;
+  let cursorTimer = null, systemIdleTicks = 0;
   let clickThrough = false, interactive = true, lastError = null, tray = null, shortcutAvailable = false;
   const unresolvedErrors = new Set();
   function updateError(code, active) {
@@ -66,19 +68,48 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
       nodeIntegration: false, sandbox: true, offscreen: mode === 'hidden', backgroundThrottling: false } });
   let presentation;
   const feedbackWindow = createFeedbackWindow({ BrowserWindow, screen, parent: window, session, root, mode, clock,
+    onDiagnostic:value=>awareness?.diagnostic(value),
     retainOnBlur: () => presentation?.retainOnBlur() === true });
-  presentation = require('./kaqiu/presentation.cjs').createPresentation({window:feedbackWindow,clock});
+  presentation = require('./kaqiu/presentation.cjs').createPresentation({window:feedbackWindow,clock,
+    onReminderChange: active => { if(active)endWalk(); if(alive())notifyState(); }});
   const kaqiu = require('./kaqiu/integration.cjs').createKaqiu({root,profileRoot,mode,clock,presentation,
     onChange: () => { if (alive()) broadcast(); }});
   const alive = () => !destroyed && !window.isDestroyed();
   let chatIntegration = null, presentationId = 0;
+  let modelSettings=null,awareness=null,studio=null;
+  function openStudio(){
+    if(!alive())return false;
+    if(!studio)studio=require('./studio-window.cjs').create({electron,session,root,mode,
+      read:()=>({...snapshot(),faces:character.faceOrder.filter(id=>!character.skip.includes(id)).map(id=>({id,label:character.labels[id]}))}),
+      command:(name,value,owner)=>{
+        if(name==='chat'||name==='settings')return openChatPanel(name);
+        if(name==='chat-cancel')return cancelChat();
+        if(name==='idle')return setIdleEnabled(value);
+        if(name==='follow'||name==='effects')return setVisualOption(name,value);
+        if(name==='tools'){
+          Menu.buildFromTemplate([kaqiu.menu(),...(awareness?[awareness.menu()]:[])]).popup({window:owner});return true;
+        }
+        return false;
+      },onEnter:()=>{action('shell:cancel');hide();},onReturn:()=>show()});
+    return !!studio.open();
+  }
+  function getModelSettings(){
+    if(!modelSettings){
+      const file=path.join(profileRoot,'model-settings.json');assertNoSymlinks(file,{allowMissing:true});
+      modelSettings=chatOptions?.settingsStore||require('./settings-store').create({file,safeStorage:electron.safeStorage});
+    }
+    return modelSettings;
+  }
   function publishChat(value) {
     if (!alive() || presentationId >= Number.MAX_SAFE_INTEGER) return;
-    if (!value.clear && (mode !== 'visible' || !window.isVisible())) return;
-    window.webContents.send('chat:presentation', { id: ++presentationId, ...value });
+    if (!value.clear && !studio?.isOpen() && (mode !== 'visible' || !window.isVisible())) return;
+    const payload={id:++presentationId,...value};
+    if(studio?.publishChat(payload))return;
+    window.webContents.send('chat:presentation',payload);
   }
   function cancelChat() {
     if (!alive()) return false;
+    awareness?.interrupt();
     if (chatIntegration) chatIntegration.cancel(); else publishChat({ clear: true });
     return true;
   }
@@ -86,23 +117,26 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     if (!alive()) return false;
     try {
       if (!chatIntegration) chatIntegration = require('./chat-integration.cjs').create({
-        electron, session, root, profileRoot, mode, storageLayout, appDataRoot, chatOptions,
+        electron, session, root, profileRoot, mode, storageLayout, appDataRoot, chatOptions:{...chatOptions,settingsStore:getModelSettings()},
         onReply: reply => publishChat(reply), onCancel: () => publishChat({ clear: true }),
+        onSettingsChange:()=>awareness?.interrupt(),
       });
       const opened = which === 'chat' ? chatIntegration.openChat() : chatIntegration.openSettings();
       updateError('Chat settings unavailable', false); return !!opened;
     } catch { updateError('Chat settings unavailable', true); notifyState(); return false; }
   }
-  const rescueAvailable = () => !!(tray && !tray.isDestroyed()) || shortcutAvailable || testPolicy?.rescueAvailable === true;
+  const rescueAvailable = () => studio?.isOpen() || !!(tray && !tray.isDestroyed()) || shortcutAvailable || testPolicy?.rescueAvailable === true;
   const snapshot = () => ({ bounds: window.isDestroyed() ? { ...cachedBounds } : window.getBounds(), size, alwaysOnTop,
-    clickThrough, visible: !window.isDestroyed() && window.isVisible(), idleEnabled,
+    clickThrough, visible: !window.isDestroyed() && window.isVisible(), idleEnabled, wanderEnabled, followEnabled, fxEnabled,
+    workArea: {...screen.getDisplayMatching(window.isDestroyed() ? cachedBounds : window.getBounds()).workArea},
+    reminderActive: presentation.retainOnBlur(),
     shortcut: SHORTCUT, shortcutAvailable, shortcutStatus, rescueAvailable: rescueAvailable(),
     testRescue: testPolicy?.rescueAvailable === true, lastError, mode,
-    stateLoadStatus, stateWriteBlocked, stateNoticeCode, kaqiu:kaqiu.snapshot() });
+    stateLoadStatus, stateWriteBlocked, stateNoticeCode, kaqiu:kaqiu.snapshot(),awareness:awareness?.state() });
   function save() {
     if (saveTimer !== null) { clock.clearTimeout(saveTimer); saveTimer = null; }
     if (stateWriteBlocked) return false;
-    const state = { bounds: snapshot().bounds, size, alwaysOnTop, idleEnabled };
+    const state = { bounds: snapshot().bounds, size, alwaysOnTop, idleEnabled, wanderEnabled, followEnabled, fxEnabled };
     const serialized = JSON.stringify(state);
     try {
       if (serialized !== lastSaved || unresolvedErrors.has('Window state save failed')) {
@@ -125,6 +159,7 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     cachedBounds = window.getBounds();
     feedbackWindow.sync();
     window.webContents.send('desktop:state', snapshot());
+    studio?.publishState();
   } }
   // Error/recovery notifications are not persistence requests: never retry from them.
   const broadcast = () => { if (alive()) {
@@ -156,14 +191,39 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
   }
   function drag(value) {
     if (!alive() || clickThrough || !keys(value, ['dx', 'dy']) || !number(value.dx, -10000, 10000) || !number(value.dy, -10000, 10000)) return false;
+    walking = null;
     const b = window.getBounds();
     resizeSession.reset();
     const next=fitBounds({ ...b, x: b.x + value.dx, y: b.y + value.dy }, screen.getAllDisplays(), screen.getPrimaryDisplay());
     const moved = moveWithStableSize(next);
     broadcast(); return moved;
   }
+  function walk(value) {
+    if (!alive() || !keys(value,['id','phase'],['offset']) || !Number.isSafeInteger(value.id) || value.id <= 0) return false;
+    if (value.phase === 'end') {
+      if (walking?.id !== value.id) return false;
+      walking = null; broadcast(); return true;
+    }
+    if (clickThrough || menuDepth || (mode === 'visible' && !window.isVisible()) || presentation.retainOnBlur()) return false;
+    if (value.phase === 'begin') {
+      if (value.id <= walkHigh) return false;
+      walkHigh=value.id;
+      walking={id:value.id,bounds:window.getBounds(),area:screen.getDisplayMatching(window.getBounds()).workArea};
+      resizeSession.reset();return true;
+    }
+    if (value.phase !== 'step' || walking?.id !== value.id || !number(value.offset,-10000,10000)) return false;
+    const b=walking.bounds,a=walking.area;
+    const x=Math.round(Math.max(a.x,Math.min(a.x+a.width-b.width,b.x+value.offset)));
+    if(window.getBounds().x!==x)moveWithStableSize({...b,x});
+    return true;
+  }
+  function endWalk() {
+    if(!walking)return;
+    walking=null;scheduleSave();
+  }
   function resizeBy(value) {
     if (!alive() || clickThrough) return false;
+    walking = null;
     let factor = value, anchor;
     if (record(value)) {
       if (!keys(value, ['factor'], ['anchor'])) return false;
@@ -177,6 +237,7 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     size = 'custom'; window.setBounds(next); broadcast(); return true;
   }
   const action = name => { if (alive()) {
+    if (['shell:cancel','shell:hide','idle:hold','idle:off','hop'].includes(name) || name.startsWith('motion:')) endWalk();
     if (['shell:cancel', 'shell:hide', 'blink', 'face-next'].includes(name) || name.startsWith('face:')) cancelChat();
     if (['shell:cancel', 'idle:hold', 'idle:off'].includes(name)) presentation.clearNormal();
     if (name === 'shell:hide') presentation.setEnabled(false);
@@ -218,11 +279,18 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
   }
   function pollCursor() {
     stopCursorTimer();
-    if (!alive() || mode!=='visible' || !window.isVisible() || clickThrough) return;
+    if (!alive() || mode!=='visible' || !window.isVisible()) return;
+    // About once a second, including click-through mode. Send repeated zeroes
+    // too: continued game input must keep refreshing the renderer's quiet clock.
+    if (systemIdleTicks++ % 30 === 0 && electron.powerMonitor?.getSystemIdleTime) {
+      window.webContents.send('desktop:system-idle',electron.powerMonitor.getSystemIdleTime());
+    }
     // Chieri/Meihua read the system cursor independently of Chromium's mouse
     // forwarding. Otherwise a missed move can leave alpha pass-through stuck.
-    const point=screen.getCursorScreenPoint(), bounds=window.getBounds();
-    window.webContents.send('desktop:cursor',{x:point.x-bounds.x,y:point.y-bounds.y});
+    if (!clickThrough) {
+      const point=screen.getCursorScreenPoint(), bounds=window.getBounds();
+      window.webContents.send('desktop:cursor',{x:point.x-bounds.x,y:point.y-bounds.y});
+    }
     cursorTimer=clock.setTimeout(pollCursor,33);
     cursorTimer?.unref?.();
   }
@@ -251,6 +319,12 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     if (!alive() || typeof value !== 'boolean') return false;
     idleEnabled = value; action('shell:cancel'); action(value ? 'idle:on' : 'idle:off'); broadcast(); return true;
   }
+  function setVisualOption(name,value) {
+    if (!alive() || typeof value !== 'boolean') return false;
+    if(name==='follow')followEnabled=value;
+    else fxEnabled=value;
+    broadcast();return true;
+  }
   function setSize(value) {
     if (!alive() || !Object.hasOwn(SIZE_PRESETS, value)) return false;
     const b = window.getBounds(), preset = SIZE_PRESETS[value];
@@ -268,6 +342,7 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
   }
   function show() {
     if (!alive()) return false;
+    if(studio?.isOpen()){studio.close();return true;}
     setClickThrough(false);
     // Like Chieri/Meihua, revealing the pet must not activate it over a game.
     // Explicit chat/settings windows retain their own normal focus behavior.
@@ -283,11 +358,13 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
   function quit() { if (!alive()) return false; destroy(); app.quit(); return true; }
   function menuTemplate() {
     return [
+      { id: 'studio', label: '打开主窗口', click: openStudio },
       { id: 'chat', label: '和白姐聊天', click: () => openChatPanel('chat') },
       { id: 'settings', label: '模型设置', click: () => openChatPanel('settings') },
       kaqiu.menu(),
+      ...(awareness?[awareness.menu()]:[]),
+      { id: 'motion:care', label: '主动回望（预览）', click: () => action('motion:care') },
       { id: 'blink', label: '眨眼', click: () => action('blink') },
-      { id: 'face-next', label: '下一个表情', click: () => action('face-next') },
       { id: 'hop', label: '小跳', click: () => action('hop') },
       { id: 'reference-motions', label: '千绘莉动作', submenu: [
         { id: 'motion:all', label: '顺序演示全部', click: () => action('motion:all') },
@@ -295,11 +372,13 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
         { type: 'separator' },
         ...require('./src/reference-motion.js').catalog.map(a => ({id:'motion:'+a.id,label:a.label,click:()=>action('motion:'+a.id)})),
       ] },
-      { id: 'face', label: '表情', submenu: [
-        { id: 'face:auto', label: '自动表情', click: () => action('face:auto') },
-        ...character.faceOrder.filter(id => !character.skip.includes(id)).map(id => ({ id: `face:${id}`, label: character.labels[id], click: () => action(`face:${id}`) })),
-      ] },
       { id: 'idle', label: '自动待机动作', type: 'checkbox', checked: idleEnabled, click: item => setIdleEnabled(item.checked) },
+      { id: 'follow', label: '视线轻随鼠标', type: 'checkbox', checked: followEnabled, click: item => setVisualOption('follow',item.checked) },
+      { id: 'effects', label: '脸红与情绪特效', type: 'checkbox', checked: fxEnabled, click: item => setVisualOption('effects',item.checked) },
+      { id: 'wander', label: '偶尔自主散步', type: 'checkbox', checked: wanderEnabled, click: item => {
+        wanderEnabled = item.checked === true; action('shell:cancel'); broadcast();
+      } },
+      { id: 'walk-now', label: '散步一小段', click: () => action('walk:now') },
       { id: 'size', label: '尺寸', submenu: Object.entries(SIZE_PRESETS).map(([id, value]) => ({
         id: `size:${id}`, label: value.label, type: 'radio', checked: size === id, click: () => setSize(id),
       })).concat([{ id: 'size:custom', label: '自定义（Ctrl+滚轮）', type: 'radio', checked: size === 'custom', enabled: false }]) },
@@ -340,6 +419,13 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
   }
   let ready;
   try {
+    awareness=require('./awareness/integration.cjs').create({electron,window,profileRoot,mode,clock,options:awarenessOptions,
+      getConfig:()=>getModelSettings().getRequestConfig(),
+      available:()=>alive()&&(mode==='hidden'||window.isVisible())&&!window.isMinimized?.(),
+      menuOpen:()=>menuDepth>0,
+      busy:()=>menuDepth>0||!!walking||presentation.retainOnBlur()||!!chatIntegration?.busy(),
+      onChange:()=>{if(alive()){notifyState();if(tray&&!tray.isDestroyed()&&!menuDepth)refreshTrayMenu();}}
+    });
     if (mode === 'visible') {
       try {
         tray = new Tray(path.join(root, 'shared/tray.png'));
@@ -360,12 +446,14 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
       listen(window.webContents, name, event => event.preventDefault());
     function refit() {
       if (!alive()) return;
+      action('shell:cancel');
       resizeSession.reset();
       window.setBounds(fitBounds(window.getBounds(), screen.getAllDisplays(), screen.getPrimaryDisplay()));
       broadcast();
     }
     for (const name of ['display-added', 'display-removed', 'display-metrics-changed']) listen(screen, name, refit);
-    listen(window, 'move', broadcast); listen(window, 'resize', broadcast);
+    const geometryChanged = () => { if (walking) feedbackWindow.sync(); else broadcast(); };
+    listen(window, 'move', geometryChanged); listen(window, 'resize', geometryChanged);
     listen(window, 'close', save); listen(window, 'closed', destroy); listen(app, 'before-quit', destroy);
     listen(window, 'blur', () => action('shell:cancel'));
     listen(window, 'show', () => {maintainTopmost();pollCursor();});
@@ -374,6 +462,7 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     listen(window, 'hide', () => { stopTopmostTimer(); stopCursorTimer(); action('shell:cancel'); action('shell:hide'); broadcast(); });
     on('desktop:feedback', 1, value => presentation.fromRenderer(value));
     on('drag', 1, drag); on('resize-by', 1, resizeBy);
+    on('desktop:walk', 1, walk);
     on('interactive', 1, setInteractive); on('menu', 1, menu); on('desktop:command', 1, command);
     on('idle-ready', 0, () => { broadcast(); action(idleEnabled ? 'idle:on' : 'idle:off'); });
     ipcMain.handle('desktop:get-state', (event, ...args) => trusted(event) && !args.length ? snapshot() : null);
@@ -392,7 +481,7 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
   function destroy() {
     if (destroyed) return cleanupErrors;
     destroyed = true;
-    const releases = [stopTopmostTimer, stopCursorTimer, () => chatIntegration?.destroy(), () => kaqiu.destroy(), () => presentation.destroy(), () => feedbackWindow.destroy(), save,
+    const releases = [stopTopmostTimer, stopCursorTimer, () => studio?.destroy(), () => awareness?.destroy(), () => chatIntegration?.destroy(), () => kaqiu.destroy(), () => presentation.destroy(), () => feedbackWindow.destroy(), save,
       ...listeners.map(([name, fn]) => () => ipcMain.removeListener(name, fn)),
       ...nativeListeners.map(([target, name, fn]) => () => target.removeListener(name, fn)),
     ];
@@ -411,6 +500,6 @@ function createShell({ electron, session, root, profileRoot, mode = 'hidden', st
     return cleanupErrors;
   }
   return { window, ready, snapshot, drag, resizeBy, setInteractive, setClickThrough, setTopmost, setIdleEnabled,
-    setSize, hide, show, reset, quit, menu, menuTemplate, command, save, destroy, kaqiu };
+    setSize, hide, show, reset, quit, menu, menuTemplate, command, save, destroy, kaqiu, awareness, openStudio };
 }
 module.exports = { createShell, ENTRY_URL, SHORTCUT };

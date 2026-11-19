@@ -90,6 +90,30 @@ function harness({ mode = 'hidden', trayWorks = true, shortcutWorks = true, save
     flush: () => { const values = [...timers.values()]; timers.clear(); values.forEach(fn => fn()); } };
 }
 
+test('system idle samples continue during click-through and stop with the window lifecycle',async()=>{
+  const h=harness({mode:'visible'});let seconds=0;
+  h.electron.powerMonitor={getSystemIdleTime:()=>seconds};
+  const samples=()=>h.calls.filter(c=>c[0]==='send'&&c[1]==='desktop:system-idle').map(c=>c[2]);
+  try {
+    await h.shell.ready;
+    h.shell.setClickThrough(true); h.calls.length=0;
+    for(let i=0;i<65;i++)h.flush();
+    assert.ok(samples().length>=2,'unchanged zero must be sent again');
+    assert.ok(samples().every(s=>s===0));
+    assert.equal(h.calls.some(c=>c[1]==='desktop:cursor'),false);
+    seconds=90;h.calls.length=0;
+    for(let i=0;i<30;i++)h.flush();
+    assert.ok(samples().includes(90));
+    h.shell.hide();h.calls.length=0;
+    for(let i=0;i<35;i++)h.flush();
+    assert.equal(samples().length,0);
+    h.shell.show();
+    for(let i=0;i<30;i++)h.flush();
+    assert.ok(samples().includes(90));
+  }finally{h.shell.destroy();}
+  assert.equal(h.timers.size,0);
+});
+
 test('IPC geometry accepts only the current main frame and strict payloads', () => {
   const h = harness();
   try {
@@ -336,12 +360,22 @@ test('window preferences restore and persist only the injected profile state', (
     assert.equal(h.shell.snapshot().size, 'large');
     assert.equal(h.shell.snapshot().alwaysOnTop, false);
     assert.equal(h.shell.snapshot().idleEnabled, false);
+    assert.equal(h.shell.snapshot().followEnabled, true);
+    assert.equal(h.shell.snapshot().fxEnabled, true);
     assert.deepEqual(h.ioCalls, [['load', path.join(profileRoot, 'window-state.json')]]);
     h.send('drag', { dx: 10, dy: 15 }); h.send('desktop:command', { name: 'topmost', value: true });
+    for(const id of ['follow','effects'])h.shell.menuTemplate().find(item=>item.id===id).click({checked:false});
     h.flush();
     const write = h.ioCalls.filter(c => c[0] === 'save').at(-1); assert.ok(write);
     assert.equal(write[1], path.join(profileRoot, 'window-state.json'));
-    assert.deepEqual(Object.keys(write[2]).sort(), ['alwaysOnTop', 'bounds', 'idleEnabled', 'size']);
+    assert.deepEqual(Object.keys(write[2]).sort(), ['alwaysOnTop', 'bounds', 'followEnabled', 'fxEnabled', 'idleEnabled', 'size', 'wanderEnabled']);
+    assert.equal(write[2].followEnabled, false);
+    assert.equal(write[2].fxEnabled, false);
+    const restored=harness({saved:write[2]});
+    try {
+      assert.equal(restored.shell.snapshot().followEnabled, false);
+      assert.equal(restored.shell.snapshot().fxEnabled, false);
+    } finally {restored.shell.destroy();}
     assert.deepEqual(write[2].bounds, { x: 30, y: 45, width: 300, height: 435 });
     assert.equal(write[2].alwaysOnTop, true);
     h.send('resize-by', 1.1); h.shell.destroy();
@@ -640,5 +674,32 @@ test('pet startup, rescue, and reset reveal without activating over the foregrou
   assert.equal(h.calls.some(c=>c[0]==='show'||c[0]==='focus'),false,'revealing the overlay must not activate it over a fullscreen game');
   assert.equal(h.calls.filter(c=>c[0]==='showInactive').length,3);
   assert.equal(h.shell.window.isVisible(),true);assert.ok(h.calls.some(c=>c[0]==='moveTop'));assert.ok(h.calls.some(c=>c[1]==='desktop:cursor'));
+ }finally{h.shell.destroy();}
+});
+
+test('walk displacement keeps size and focus, batches persistence, and yields to drag',async()=>{
+ const h=harness({mode:'visible'});
+ try{
+  await h.shell.ready;
+  const before=h.shell.window.getBounds();
+  h.send('desktop:walk',{phase:'begin',id:1});h.calls.length=0;h.ioCalls.length=0;
+  for(let i=1;i<=30;i++)h.send('desktop:walk',{phase:'step',id:1,offset:-i*.75});
+  assert.deepEqual(h.shell.window.getBounds(),{...before,x:Math.round(before.x-22.5)});
+  assert.equal(h.calls.filter(c=>c[0]==='tray-menu').length,0);
+  assert.equal(h.calls.some(c=>c[0]==='show'||c[0]==='showInactive'||c[0]==='focus'||c[0]==='moveTop'),false);
+  assert.equal(h.ioCalls.length,0);
+  h.send('desktop:walk',{phase:'end',id:1});
+  assert.ok(h.calls.some(c=>c[1]==='desktop:state'));
+  const stopped=h.shell.window.getBounds();
+  h.send('desktop:walk',{phase:'step',id:1,offset:-200});
+  assert.deepEqual(h.shell.window.getBounds(),stopped);
+  h.send('desktop:walk',{phase:'begin',id:2});
+  h.send('drag',{dx:-10,dy:-10});const dragged=h.shell.window.getBounds();
+  h.send('desktop:walk',{phase:'step',id:2,offset:-100});
+  assert.deepEqual(h.shell.window.getBounds(),dragged);
+  h.send('desktop:walk',{phase:'begin',id:3});
+  h.send('desktop:walk',{phase:'step',id:3,offset:10000});
+  assert.equal(h.shell.window.getBounds().x,1920-before.width);
+  h.send('desktop:walk',{phase:'end',id:3});
  }finally{h.shell.destroy();}
 });

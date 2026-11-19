@@ -32,14 +32,14 @@ class WorkerTests(unittest.TestCase):
 
     def test_old_chat_does_not_repeat_after_15s_and_new_row_can_trigger(self):
         g = MessageGate()
-        g.update(1, 0)
-        self.assertTrue(g.update(1, .2))
+        g.update([20], 0)
+        self.assertTrue(g.update([20], .2))
         for t in [5, 15, 30, 60]:
-            self.assertFalse(g.update(1, t))
-        g.update(2, 61)
-        self.assertTrue(g.update(2, 61.2))
-        self.assertFalse(g.update(1, 62))
-        self.assertFalse(g.update(1, 62.2))
+            self.assertFalse(g.update([20], t))
+        g.update([20, 70], 61)
+        self.assertTrue(g.update([20, 70], 61.2))
+        self.assertFalse(g.update([20], 62))
+        self.assertFalse(g.update([20], 62.2))
 
     def test_self_color_gate(self):
         im = Image.new('RGB', (100, 40), (0, 0, 0))
@@ -57,9 +57,19 @@ class WorkerTests(unittest.TestCase):
         events = r.process(frame, .2)
         self.assertEqual(events, [{'type':'trigger','card':'notes'}])
         self.assertFalse(r.process(frame, 45))
-        r.setup((0, 0, 2560, 1600))
-        self.assertTrue(r.profile)
-        self.assertFalse(any(rule[0]['card']=='miao' for rule in r.rules))
+
+    def test_1610_preserves_authored_notes_location_and_adds_miao(self):
+        r = Recognizer();r.configure(['notes', 'miao']);r.setup((0, 0, 2560, 1600))
+        frame = Image.new('RGB', (2560, 1600), (20, 20, 20))
+        with Image.open(r.assets/'templates_1610/notes_banner.png') as notes:
+            frame.paste(notes.convert('RGB'), (808, 218))
+        with Image.open(r.assets/'templates_v2/miao_prefix.png') as miao:
+            label = miao.convert('RGB').resize((round(miao.width*4/3), round(miao.height*4/3)), Image.Resampling.BILINEAR)
+        frame.paste((230, 200, 20), (12, 1100, 92, 1100+label.height))
+        frame.paste(label, (130, 1100))
+        self.assertEqual(r.process(frame, 0), [])
+        self.assertCountEqual(r.process(frame, .2), [
+            {'type': 'trigger', 'card': 'notes'}, {'type': 'trigger', 'card': 'miao'}])
 
     def test_send_sequence_and_focus_loss_and_failure_without_real_input(self):
         class Native:
@@ -77,6 +87,24 @@ class WorkerTests(unittest.TestCase):
         n=Native();n.ok=False;events=[]
         self.assertFalse(send_miao(n,lambda:True,events.append,lambda _:None))
         self.assertEqual(len(n.keys),1)
+
+    def test_analyzer_slots_appear_then_vanish_at_1080p(self):
+        for slot, template in [('analyzer_upper', 'analyzer_icon4.png'), ('analyzer_lower', 'analyzer_icon.png')]:
+            with self.subTest(slot=slot):
+                r = Recognizer();r.configure(['analyzer']);r.setup((0, 0, 1920, 1080))
+                _, rect, _ = next(item for item in r.rules if item[0].get('key') == slot)
+                blank = Image.new('RGB', (1920, 1080), (20, 20, 20))
+                held = blank.copy()
+                with Image.open(r.assets/'templates'/template) as icon:
+                    held.paste(icon.convert('RGB'), (rect[0]+8, rect[1]+8))
+                for frame, stamp in [(blank, 0), (held, 1), (held, 1.4), (held, 3), (blank, 3.1)]:
+                    self.assertEqual(r.process(frame, stamp), [])
+                self.assertEqual(r.process(blank, 3.5), [{'type':'trigger', 'card':'analyzer'}])
+                self.assertEqual(r.process(blank, 4), [])
+                r.process(held, 5);r.process(held, 5.5)
+                r.reset_contacts()
+                self.assertEqual(r.process(blank, 6), [])
+                self.assertEqual(r.process(blank, 6.5), [])
 
     def test_real_miao_template_counts_only_own_new_rows(self):
         r=Recognizer();r.configure(['miao']);r.setup((0,0,1920,1080))

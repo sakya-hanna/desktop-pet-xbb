@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const {validateProfile,assertNoSymlinks,assertSessionPolicy}=require('./resource-policy.cjs');
 // Called lazily by the shell, never by renderer data. No legacy profile lookup.
-function create({electron,session,root,profileRoot,mode,storageLayout,appDataRoot,chatOptions={},onReply,onCancel}){
+function create({electron,session,root,profileRoot,mode,storageLayout,appDataRoot,chatOptions={},onReply,onCancel,onSettingsChange=()=>{}}){
  profileRoot=validateProfile({root,profileRoot,mode,storageLayout,appDataRoot});assertSessionPolicy(session);
  if(!chatOptions||typeof chatOptions!=='object'||Array.isArray(chatOptions)||Object.keys(chatOptions).some(k=>!['request','settingsStore'].includes(k))||(chatOptions.request!==undefined&&typeof chatOptions.request!=='function'))throw Error('Invalid main chat options');
  const settingsFile=path.join(profileRoot,'model-settings.json'),historyFile=path.join(profileRoot,'conversation.json'),personaFile=path.join(root,'persona.md');
@@ -27,8 +27,8 @@ function create({electron,session,root,profileRoot,mode,storageLayout,appDataRoo
  const common={BrowserWindow:electron.BrowserWindow,ipcMain:electron.ipcMain,session,root,mode};
  try{
   chat=require('./chat-window').create({...common,service});
-  settingsWindow=require('./settings-window').create({...common,store:settings,testConnection,cancelTest,onChange:()=>service.cancel()});
+  settingsWindow=require('./settings-window').create({...common,store:settings,testConnection,cancelTest,onChange:()=>{service.cancel();onSettingsChange();}});
  }catch(error){destroy();throw error;}
- return {openChat:()=>!destroyed&&chat.open(),openSettings:()=>!destroyed&&settingsWindow.open(),cancel:()=>service.cancel(),destroy};
+ return {openChat:()=>!destroyed&&chat.open(),openSettings:()=>!destroyed&&settingsWindow.open(),cancel:()=>service.cancel(),busy:()=>service.state().pending,destroy};
 }
 module.exports={create};

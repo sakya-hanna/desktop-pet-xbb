@@ -68,9 +68,32 @@
   void main(){vec2 p=(a_position-u_camera.xy)/u_camera.zw;gl_Position=vec4(p.x*2.-1.,1.-p.y*2.,0.,1.);v_uv=a_uv;v_material=a_material;}`;
   const FS=`#version 300 es
   precision highp float;in vec2 v_uv;in vec2 v_material;uniform sampler2D u_texture;uniform sampler2D u_receiver;uniform sampler2D u_face;uniform sampler2D u_hair;
-  uniform sampler2D u_headCover;uniform int u_headPair;uniform int u_shadow;uniform vec4 u_rect;uniform vec4 u_faceRect;uniform vec2 u_offset;uniform float u_opacity;out vec4 color;
+  uniform sampler2D u_headCover;uniform int u_headPair;uniform int u_walkColor;uniform int u_shadow;uniform int u_wireframe;uniform vec4 u_rect;uniform vec4 u_faceRect;uniform vec2 u_offset;
+  uniform float u_opacity;uniform float u_blush;uniform vec2 u_leftCheek;uniform vec2 u_rightCheek;out vec4 color;
+  float cheekTint(vec2 point,vec2 center){
+    vec2 d=(point-center)/vec2(14.,8.);
+    return exp(-2.*dot(d,d));
+  }
   void main(){if(any(lessThan(v_uv,vec2(0.)))||any(greaterThan(v_uv,vec2(1.)))){color=vec4(0.);return;}
-    vec4 c=texture(u_texture,v_uv);if(u_headPair==1)c+=texture(u_headCover,v_uv);if(u_shadow==0){color=c*u_opacity;return;}
+    vec4 c=texture(u_texture,v_uv);
+    if(u_headPair==1){
+      if(u_blush>0.){
+        vec2 p=v_uv*vec2(${binding.width}.,${binding.height}.);
+        float tint=max(cheekTint(p,u_leftCheek),cheekTint(p,u_rightCheek))*u_blush;
+        c.rgb=mix(c.rgb,vec3(1.,.44,.54)*c.a,tint);
+      }
+      c+=texture(u_headCover,v_uv);
+    }
+    if(u_wireframe==1){float a=c.a*.55;color=vec4(vec3(.20,.48,.68)*a,a);return;}
+    if(u_walkColor==1&&c.a>0.0001){
+      // Existing first-pass display grade; artwork still awaits replacement.
+      vec3 rgb=c.rgb/c.a;
+      float luminance=dot(rgb,vec3(0.2126,0.7152,0.0722));
+      float skin=smoothstep(0.035,0.10,rgb.r-rgb.b)*smoothstep(0.02,0.07,rgb.g-rgb.b)*smoothstep(0.02,0.08,rgb.r-rgb.g);
+      float lift=mix(0.42,0.66,skin)*smoothstep(0.28,0.70,luminance);
+      c.rgb=mix(rgb,vec3(1.),lift)*c.a;
+    }
+    if(u_shadow==0){color=c*u_opacity;return;}
     vec2 uv=(v_material-u_rect.xy)/u_rect.zw;
     if(any(lessThan(uv,vec2(0.)))||any(greaterThan(uv,vec2(1.)))){color=vec4(0.);return;}
     float alpha=c.a*texture(u_receiver,uv).a*0.20;
@@ -90,7 +113,9 @@
     const program=gl.createProgram();gl.attachShader(program,shader(gl,gl.VERTEX_SHADER,VS));gl.attachShader(program,shader(gl,gl.FRAGMENT_SHADER,FS));gl.linkProgram(program);
     if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));
     gl.useProgram(program);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
-    const uniforms={};for(const name of ['camera','texture','receiver','face','hair','shadow','rect','faceRect','offset','opacity','headPair','headCover'])uniforms[name]=gl.getUniformLocation(program,'u_'+name);
+    const uniforms={};for(const name of ['camera','texture','receiver','face','hair','shadow','rect','faceRect','offset','opacity','headPair','headCover','walkColor','wireframe','blush','leftCheek','rightCheek'])uniforms[name]=gl.getUniformLocation(program,'u_'+name);
+    gl.uniform2fv(uniforms.leftCheek,CharacterBinding.cheeks.left);
+    gl.uniform2fv(uniforms.rightCheek,CharacterBinding.cheeks.right);
     const attributes={};for(const name of ['position','uv','material'])attributes[name]=gl.getAttribLocation(program,'a_'+name);
     const textures=new Map();
     for(const [name,image] of images){
@@ -119,6 +144,8 @@
       return {texture,rect,part,data,vao,buffers,grabInfluence};
     }
     const full={x:0,y:0,w:binding.width,h:binding.height};
+    const walkLayers=new Map((meta.walk?.textures||[]).map(name=>[name,
+      mesh(name,{x:-75,y:0,w:680,h:800},null,100)]));
     const headMaster=MaterialRig.makeMesh(headSpec.rect,headSpec.step,full),headPositions=new WeakMap(),frameMeshes=new WeakMap();
     function headData(rect){
       const uv=new Float32Array(headMaster.rest.length);
@@ -140,7 +167,10 @@
       for(const tile of tiles){const offset=rest.length/2;for(const v of tile.rest)rest.push(v);for(const v of tile.uv)uv.push(v);for(const i of tile.indices)indices.push(i+offset);}
       return {rest:new Float32Array(rest),uv:new Float32Array(uv),indices:new Uint32Array(indices)};
     }
-    const original=mesh('baijie-body.png',full,null,8),body=mesh(headSpec.torso,full,materials.torso,5,torsoData());
+    const original=mesh('baijie-body.png',full,null,8),body=mesh(meta.feet?.torso||headSpec.torso,full,materials.torso,5,torsoData());
+    const feet=(meta.feet?.sides||[]).map(f=>({side:f.side,
+      shod:mesh(f.shod,full,parts['leg-'+f.side],3),bare:mesh(f.bare,full,parts['leg-'+f.side],3),
+      shoe:mesh(f.shoe,full,{...parts['leg-'+f.side],footwear:true},3)}));
     const rearHair=(meta.rearHair||[]).map(p=>{
       if(!requiredRear.includes(p.part)||p.texture!=='baijie-'+p.part+'.png')throw Error('Invalid rear hair binding');
       return mesh(p.texture,full,parts[p.part],5);
@@ -210,30 +240,33 @@
         }return out;
       }
       const base=sample('baijie-face-'+id+'.png');
-      const pair=[base,meta.blink.textures[id]?sample(meta.blink.textures[id]):base];
+      const closed=meta.blink.textures[id]?sample(meta.blink.textures[id]):base;
+      const half=meta.blink.halfTextures?.[id]?sample(meta.blink.halfTextures[id]):base;
       // Derive the protected eye footprint from the actual baked replacements.
       // Brows, cheeks and mouth remain on the ordinary expression blend path.
-      if(pair[0]!==pair[1])for(let k=0;k<base.length;k+=4){
-        if([0,1,2,3].some(c=>Math.abs(pair[0][k+c]-pair[1][k+c])>1e-6))eyePixels[k/4]=1;
+      if(half!==base||closed!==base)for(let k=0;k<base.length;k+=4){
+        if([0,1,2,3].some(c=>Math.abs(base[k+c]-closed[k+c])>1e-6||Math.abs(base[k+c]-half[k+c])>1e-6))eyePixels[k/4]=1;
       }
-      normalizedFaces.set(id,pair);return pair;
+      const stages=[base,half,closed];
+      normalizedFaces.set(id,stages);return stages;
     }
     function expressionLayer(weights,amount){
       if(!Array.isArray(weights)||!weights.length)throw Error('Invalid face blend');
       const total=weights.reduce((n,p)=>n+p.weight,0);
       if(weights.some(p=>!faces.has(p.face)||!Number.isFinite(p.weight)||p.weight<0)||!Number.isFinite(total)||total<=0)throw Error('Invalid face blend');
       faceBlend=weights.filter(p=>p.weight>0).map(p=>({face:p.face,weight:p.weight/total}));
-      if(faceBlend.length===1&&(amount===0||!meta.blink.textures[faceBlend[0].face]))return faces.get(faceBlend[0].face);
+      const single=faceBlend.length===1?faceBlend[0].face:null;
+      if(single&&(amount===0||!meta.blink.textures[single]&&!meta.blink.halfTextures?.[single]))return faces.get(single);
       prepareMixedFace();
       const key=JSON.stringify([faceBlend,amount]);if(key===mixedKey)return mixedFace;
       const sum=new Float32Array(mixedFace.rect.w*mixedFace.rect.h*4);
-      // Two authored eye poses are cel-switched, never dissolved together.
-      // A .6 held closure must not retain 40% of the open iris behind lashes.
-      // Closed-expression fades follow the same rule, including yawn-03.
+      // Authored eyelid stages preserve a single eye pose during each blink.
+      // Expression cross-fades still blend the cheeks, eyebrows and mouth.
       const closed=amount>=0.5||faceBlend.reduce((n,p)=>n+(closedFaces.has(p.face)?p.weight:0),0)>=0.5;
+      const stage=closed?2:amount>=.16?1:0;
       const eyeTotal=faceBlend.reduce((n,p)=>n+((closed||!closedFaces.has(p.face))?p.weight:0),0);
-      for(const p of faceBlend){const [base,eye]=normalizedFace(p.face);
-        const chosen=closed?eye:base,eyeWeight=(closed||!closedFaces.has(p.face))?p.weight/eyeTotal:0;
+      for(const p of faceBlend){const stages=normalizedFace(p.face),base=stages[0],eye=stages[2];
+        const chosen=stages[stage],eyeWeight=(closed||!closedFaces.has(p.face))?p.weight/eyeTotal:0;
         for(let k=0;k<sum.length;k+=4)for(let c=0;c<4;c++){
           sum[k+c]+=eyePixels[k/4]?eyeWeight*chosen[k+c]
             :p.weight*(base[k+c]*(1-amount)+eye[k+c]*amount);
@@ -293,7 +326,11 @@
       if(shadow){gl.bindBuffer(gl.ARRAY_BUFFER,m.buffers.material);gl.bufferSubData(gl.ARRAY_BUFFER,0,material);}
       bindTexture(0,m.texture);gl.uniform1i(uniforms.texture,0);gl.uniform1i(uniforms.shadow,shadow?1:0);gl.uniform1f(uniforms.opacity,opacity);
       gl.uniform1i(uniforms.headPair,m===headSkin?1:0);
-      if(m===headSkin){bindTexture(4,headCover.texture);gl.uniform1i(uniforms.headCover,4);}
+      gl.uniform1i(uniforms.walkColor,walkLayers.has(m.texture)?1:0);
+      if(m===headSkin){
+        bindTexture(4,headCover.texture);gl.uniform1i(uniforms.headCover,4);
+        gl.uniform1f(uniforms.blush,pose.blush||0);
+      }
       if(shadow){
         bindTexture(1,shadow.source.receiver);bindTexture(2,faceLayer.texture);bindTexture(3,shadow.source.texture);
         gl.uniform1i(uniforms.receiver,1);gl.uniform1i(uniforms.face,2);gl.uniform1i(uniforms.hair,3);
@@ -312,10 +349,18 @@
       gl.viewport(0,0,w,h);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.useProgram(program);
       const camera=PreviewView.cameraFor(cw,ch,detail,binding);
       gl.uniform4f(uniforms.camera,camera.x,camera.y,camera.w,camera.h);
-      if(reference){draw(original,{});draw(faces.get(face),{});}
+      const walk=pose.walk,sequence=walk&&meta.walk?.[walk.direction];
+      if(walk&&sequence){
+        const name=walk.phase==='walk'?sequence.frames[walk.frame]:
+          walk.phase==='turn'?sequence.turn[walk.frame]:sequence.turn[1-walk.frame];
+        draw(walkLayers.get(name),{});
+      }
+      else if(reference){draw(original,{});draw(faces.get(face),{});}
       else{
         for(const m of rearHair)draw(m,pose);
-        draw(neck,pose);draw(body,pose);draw(headSkin,pose);
+        draw(neck,pose);draw(body,pose);
+        for(const f of feet){draw(pose.feet?.bare?.[f.side]?f.bare:f.shod,pose);const drop=pose.feet?.legs?.[f.side]?.drop;if(drop>0&&drop<1)draw(f.shoe,pose,null,1-drop);}
+        draw(headSkin,pose);
         if(arm){draw(arm,pose);draw(cloth,pose);}
         for(const m of rightLayers){
           // Skirts replace the old fixed garment pixels, below wrist ornaments
@@ -354,6 +399,13 @@
       let point=[frameCamera.x+(clientX-r.x)/r.width*frameCamera.w,frameCamera.y+(clientY-r.y)/r.height*frameCamera.h];
       if(contact){
         const part=CharacterBinding.grabs[contact.partId];
+        if(part?.hairGrab){
+          const hair=CharacterBinding.parts[part.name],passive={...lastPose,grab:{...lastPose.grab,[part.name]:[0,0]}};
+          const surface=CharacterBinding.parts[contact.hairSurface]||hair;
+          const base=MaterialRig.deformPoint(contact.materialPoint,passive,binding,surface);
+          const a=MaterialRig.unparentPoint(point,hair.root,lastPose,binding,hair),b=MaterialRig.unparentPoint(base,hair.root,lastPose,binding,hair);
+          return {point:contact.materialPoint.map((v,i)=>v+a[i]-b[i]),frameId,viewportId};
+        }
         point=MaterialRig.unparentPoint(point,contact.materialPoint,lastPose,binding,part);
         if(part&&Number.isFinite(contact.influence)){
           // Remove the effective passive cloth AND the other connected panel's
@@ -377,28 +429,50 @@
         const uv=MaterialHit.pickMaterial({rest:m.data.uv,indices:m.data.indices},m.currentPositions,mapped.point);
         if(sampleAlpha(m,uv)*opacity<=16)continue;
         const rest=MaterialHit.pickMaterial(m.data,m.currentPositions,mapped.point);
-        const influence=m.grabInfluence?MaterialHit.pickMaterial({rest:m.grabInfluence,indices:m.data.indices},m.currentPositions,mapped.point)[0]:0;
+        if(m.part?.footwear)continue;
+        const hair=m.part?.longHair?m.part:m.part?.followPart;
+        const hairWeight=hair?MaterialRig.hairPullWeight(hair,rest,rest):0;
+        const influence=hairWeight>.3?hairWeight:m.grabInfluence?MaterialHit.pickMaterial({rest:m.grabInfluence,indices:m.data.indices},m.currentPositions,mapped.point)[0]:0;
         // Keep topmost alpha ownership: covered hair/limbs never become a
         // chest click through the layer beneath them. Regions are rest-space.
-        const partId=m.grabInfluence?(influence>0.05?m.part.name:null)
-          :((rest[0]-298.2)/82)**2+((rest[1]-95)/82)**2<=1?'head'
-          :(!m.part||m.part===materials.torso)&&((rest[0]-295)/45)**2+((rest[1]-222)/25)**2<=1?'chest':null;
-        return {partId,layer:m.texture,materialPoint:rest,influence,frameId,viewportId};
+        const partId=hairWeight>.3?hair.name:m.grabInfluence?(influence>0.05?m.part.name:null)
+:CharacterBinding.touchRegion(rest,m.part);
+        return {partId,layer:m.texture,materialPoint:rest,influence,frameId,viewportId,...(hairWeight>.3?{hairSurface:m.part.name}:{})};
       }
       return null;
     }
     function hitTest(clientX,clientY){
-      const hit=hitPart(clientX,clientY);return hit?.partId==='head'?hit.materialPoint:null;
+      const hit=hitPart(clientX,clientY);return ['head','cheek'].includes(hit?.partId)?hit.materialPoint:null;
     }
-    function headInputPoint(){
-      const r=canvas.getBoundingClientRect(),camera=PreviewView.cameraFor(r.width,r.height,detail,binding),point=MaterialRig.deformPoint([298.2,80],lastPose,binding);
+    function projectHeadPoint(rest){
+      const r=canvas.getBoundingClientRect(),camera=PreviewView.cameraFor(r.width,r.height,detail,binding),point=MaterialRig.deformPoint(rest,lastPose,binding,materials.head);
       return {x:r.x+(point[0]-camera.x)/camera.w*r.width,y:r.y+(point[1]-camera.y)/camera.h*r.height};
     }
+    const headInputPoint=()=>projectHeadPoint([298.2,80]);
     // Normalize immutable expression pixels during loading, not at the first
     // smile/sleep cue inside a live action. The same premultiplied arrays are
     // reused; this does not approximate eyes or alter transition timing.
     prepareMixedFace();for(const id of faces.keys())normalizedFace(id);
-    return {render,status,hitTest,hitPart,clientToMaterial,frameState,hitOpaque,headInputPoint};
+    // Optional studio overlay: share the existing deformed vertex buffers.
+    // Build only line indices once, instead of stroking every triangle in 2D.
+    function drawWireframe(){
+      if(!frameCamera)return;
+      gl.useProgram(program);gl.uniform1i(uniforms.wireframe,1);gl.uniform1i(uniforms.headPair,0);
+      try{for(const {m}of drawnLayers){
+        if(!m.wire){
+          const source=m.data.indices,edges=new Uint32Array(source.length*2);
+          for(let i=0;i<source.length;i+=3){const j=i*2,a=source[i],b=source[i+1],c=source[i+2];edges.set([a,b,b,c,c,a],j);}
+          const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+          for(const name of ['position','uv','material']){gl.bindBuffer(gl.ARRAY_BUFFER,m.buffers[name]);gl.enableVertexAttribArray(attributes[name]);gl.vertexAttribPointer(attributes[name],2,gl.FLOAT,false,0,0);}
+          const indices=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indices);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,edges,gl.STATIC_DRAW);
+          m.wire={vao,count:edges.length};
+        }
+        gl.bindVertexArray(m.wire.vao);bindTexture(0,m.texture);gl.uniform1i(uniforms.texture,0);gl.drawElements(gl.LINES,m.wire.count,gl.UNSIGNED_INT,0);
+      }}finally{gl.uniform1i(uniforms.wireframe,0);gl.bindVertexArray(null);}
+    }
+    return {render,status,hitTest,hitPart,clientToMaterial,frameState,hitOpaque,headInputPoint,projectHeadPoint,drawWireframe,
+      walkSpec:meta.walk?{cycleSeconds:meta.walk.cycleSeconds,stride:meta.walk.stride,
+        gaits:{left:meta.walk.left.rootMotion,right:meta.walk.right.rootMotion}}:null};
   }
   return renderer(canvas,false);
   }

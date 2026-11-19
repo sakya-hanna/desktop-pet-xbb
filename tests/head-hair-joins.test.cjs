@@ -2,12 +2,12 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const rig=require('../src/material-rig.js'),ch=require('../src/character.js'),{createMotion}=require('../src/reference-motion.js');
 const {createHarness,load}=require('./helpers/interaction-fixtures.cjs');
-test('pat sideways response stays small, smooth and directional while retaining downward attitude',()=>{
+test('pat keeps a centered downward attitude for either stroke direction',()=>{
  for(const side of [-1,1]){
   const m=createMotion({binding:ch.binding,idle:false}),base=createMotion({binding:ch.binding,idle:false});
   for(let i=0;i<480;i++){m.step(1/120,true,i>=240?{x:side*220,y:80}:null);base.step(1/120,true);}
   const p=m.snapshot().pose,b=base.snapshot().pose,roll=(p.headRoll-b.headRoll)*side,shift=(p.headX-b.headX)*800*side;
-  assert.ok(roll>.02&&roll<.04,'pat tilt should remain about two degrees');assert.ok(shift>1&&shift<2.2,'neck translation remains small');
+  assert.ok(Math.abs(p.headRoll)<1e-5,'held head should not sway');assert.ok(Math.abs(p.headX)<1e-7,'held head should not translate sideways');
   assert.ok(p.lookY-b.lookY>.6,'downward acceptance must remain');
  }
 });
@@ -44,7 +44,7 @@ test('real side-hair cut samples share one field and matching uploaded meshes, i
   }
   const unjoined={...ch.binding,headSupport:undefined};
   for(const rest of [[298,180],[280,205],[315,205],[265,260]])assert.deepEqual(rig.deformPoint(rest,p,ch.binding,ch.materials.torso),rig.deformPoint(rest,p,unjoined,ch.materials.torso),'central neck/chest must keep its original field');
-  for(const part of Object.values(ch.grabs))assert.deepEqual(rig.deformPoint([260,160],p,ch.binding,part,[1,0,0]),rig.deformPoint([260,160],p,unjoined,part,[1,0,0]),'arm/skirt ownership must remain unchanged');
+  for(const part of Object.values(ch.grabs).filter(p=>!p.hairGrab))assert.deepEqual(rig.deformPoint([260,160],p,ch.binding,part,[1,0,0]),rig.deformPoint([260,160],p,unjoined,part,[1,0,0]),'arm/skirt ownership must remain unchanged');
  }
  assert.ok(maxGap<.35,'uploaded cut gap '+maxGap);console.log('SIDE_HAIR_CUT '+JSON.stringify({samples:seams.length,maxGap}));
 });

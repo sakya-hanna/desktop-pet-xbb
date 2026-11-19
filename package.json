@@ -2,5 +2,8 @@
   "name": "baijie-desktop-v1",
   "version": "0.0.0-m0",
   "private": true,
-  "main": "launch.cjs"
+  "main": "launch.cjs",
+  "dependencies": {
+    "get-windows": "10.0.0"
+  }
 }

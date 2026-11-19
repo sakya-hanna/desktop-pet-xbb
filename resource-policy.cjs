@@ -4,8 +4,8 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const SCHEME = 'baijie28';
 const ENTRY_URL = `${SCHEME}://app/desktop.html`;
-const SOURCE_FILES = ['desktop-bootstrap', 'desktop-view', 'character-renderer', 'desktop-runtime',
-  'character', 'response-config', 'reference-motion', 'director', 'material-rig', 'view', 'hit-test'];
+const SOURCE_FILES = ['studio', 'desktop-bootstrap', 'desktop-view', 'character-renderer', 'desktop-runtime', 'fx-overlay',
+  'character', 'response-config', 'idle-performance', 'reference-motion', 'director', 'wander', 'material-rig', 'view', 'hit-test'];
 let allowed;
 // Importing session/feedback policy does not require private character assets.
 // Loading resources still requires the same checked, exact-name manifest.
@@ -14,7 +14,7 @@ function allowedResources() {
   assertNoSymlinks(path.join(__dirname, 'assets/manifest.json'));
   const artwork = Object.keys(require('./assets/manifest.json').images)
     .filter(name => /^baijie-[a-z0-9-]+\.png$/.test(name));
-  allowed = new Set(['chat.html', 'chat.js', 'chat.css', 'settings.html', 'settings.js', 'settings.css', 'assets/chat/baijie-avatar.png', 'feedback.html', 'feedback.css', 'src/feedback-view.js', 'desktop.html', 'desktop.css', 'assets/manifest.json', 'assets/baijie-arm-screen-left.mesh.json', 'assets/baijie-arm-screen-right.mesh.json', 'assets/baijie-skirt-front.mesh.json', 'assets/baijie-skirt-right.mesh.json', 'assets/baijie-skirt-back-visible-center.mesh.json',
+  allowed = new Set(['studio.html', 'studio.css', 'chat.html', 'chat.js', 'chat.css', 'settings.html', 'settings.js', 'settings.css', 'assets/chat/baijie-avatar.png', 'feedback.html', 'feedback.css', 'src/feedback-view.js', 'desktop.html', 'desktop.css', 'assets/manifest.json', 'assets/baijie-arm-screen-left.mesh.json', 'assets/baijie-arm-screen-right.mesh.json', 'assets/baijie-skirt-front.mesh.json', 'assets/baijie-skirt-right.mesh.json', 'assets/baijie-skirt-back-visible-center.mesh.json',
     ...SOURCE_FILES.map(name => `src/${name}.js`), ...artwork.map(name => `assets/${name}`)]);
   return allowed;
 }

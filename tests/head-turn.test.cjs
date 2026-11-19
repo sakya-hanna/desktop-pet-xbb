@@ -4,17 +4,20 @@ const {binding,materials}=require('../src/character.js'),rig=require('../src/mat
 const {createDirector}=require('../src/director.js');
 const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
 
-test('turning changes facial proportions while the jaw stays supported by the neck',()=>{
- const points={nose:[298,114],chin:[297.4,144.8],left:[258,108],right:[338,108]};
+test('yaw carries the skull and jaw with the face without stretching the painted eyes',()=>{
+ const points={crown:[298,20],nose:[298,114],chin:[297.4,144.8],left:[245,78],right:[354,78]};
  const report=[];
  for(const lookX of [-1.2,1.2]){
   const pose={referenceMotion:true,lookX},moved=Object.fromEntries(Object.entries(points).map(([id,p])=>[id,rig.deformPoint(p,pose,binding,materials.head)]));
   const dx=Object.fromEntries(Object.entries(moved).map(([id,p])=>[id,p[0]-points[id][0]]));
-  assert.ok(Math.abs(dx.nose)>2*Math.abs(dx.chin),'chin must not slide with the face centre');
-  assert.ok(Math.abs(dx.nose-dx.left)>2&&Math.abs(dx.nose-dx.right)>2,'a common translation is not a turn');
+  for(const id of ['crown','chin','left','right']){
+   assert.ok(dx[id]*dx.nose>0,'the whole head must participate in yaw');
+   assert.ok(Math.abs(dx[id])>Math.abs(dx.nose)*.5,'facial motion must not leave the skull/jaw behind: '+id);
+  }
+  assert.ok(Math.abs(dx.nose-(dx.left+dx.right)/2)>.5,'retain depth difference, not only translate the head');
   for(const [a,b] of [[[259,97],[284,97]],[[313,97],[338,97]]]){
    const width=dist(rig.deformPoint(a,pose,binding,materials.head),rig.deformPoint(b,pose,binding,materials.head))/dist(a,b);
-   assert.ok(width>.75&&width<1.25,'painted eyes must retain their proportions');
+   assert.ok(width>.92&&width<1.08,'small yaw must not inflate one eye and pinch the other');
   }
   for(const p of [[240,180],[295,200],[350,180],[265,798]])assert.deepEqual(rig.deformPoint(p,pose,binding,materials.torso),p,'yaw must not drag shoulders or feet');
   report.push({lookX,dx});

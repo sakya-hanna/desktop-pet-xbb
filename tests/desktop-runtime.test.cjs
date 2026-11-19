@@ -51,7 +51,9 @@ function fixture(options = {}) {
   win.innerWidth = rect.width; win.innerHeight = rect.height; win.devicePixelRatio = options.dpr || 1;
   const raf = new Map(), retired = []; let rafId = 0, now = 0, creations = 0;
   const sent = [], renders = [], calls = [], actions = new Set(), states = new Set(), presentations = new Set(), errors = [], published = [];
+  const systemIdle = new Set();
   const pet = {
+    onSystemIdle(fn) {systemIdle.add(fn); return () => systemIdle.delete(fn);},
     ready() {calls.push(['ready']); return options.readyPromise;},
     getState() {calls.push(['getState']); return options.statePromise || Promise.resolve(options.state || {visible: true, idleEnabled: true, clickThrough: false});},
     onAction(fn) {actions.add(fn); const remove = () => {calls.push(['unsubscribeAction']); actions.delete(fn);}; return options.subscriptionGate ? options.subscriptionGate.then(() => remove) : remove;},
@@ -90,7 +92,9 @@ function fixture(options = {}) {
   const act = value => {for (const fn of [...actions]) fn(value);};
   const state = value => {for (const fn of [...states]) fn(value);};
   return {win, doc, body, canvas, toolbar, notice, buttons, nodes, rect, captured, raf, retired, renders, calls, sent, errors, published,
-    actions, states, runtime, emit, tick, act, state, renderer, present: value => presentations.forEach(fn => fn(value)), creations: () => creations,
+    actions, states, runtime, emit, tick, act, state, renderer, systemIdle,
+    idleSample: seconds => systemIdle.forEach(fn => fn(seconds)),
+    present: value => presentations.forEach(fn => fn(value)), creations: () => creations,
     opaque: value => {opaque = value;}, head: value => {head = value;},
     down: (data = {}) => emit(canvas, 'pointerdown', data),
     move: (x, data = {}) => emit(win, 'pointermove', {clientX: x, ...data}),
@@ -101,6 +105,41 @@ function fixture(options = {}) {
 const flush = async () => {for (let i = 0; i < 8; i++) await Promise.resolve();};
 const own = value => JSON.parse(JSON.stringify(value));
 const calls = (f, name) => f.calls.filter(row => row[0] === name);
+
+test('cursor attention eases out without driving the hair or skirt simulation',()=>{
+  const f=fixture();
+  try {
+    f.runtime.start();f.tick(2);
+    f.move(f.rect.x+f.rect.width-2,{clientY:f.rect.y+90,buttons:0,pointerType:'mouse'});
+    f.tick(12);
+    const motion=f.snapshot().pose,rendered=f.renders.at(-1)[0];
+    assert.ok(rendered.lookX-motion.lookX>.05);
+    for(const key of ['hair','flexHair','hairTurn','cloth','bodyRoll','bodyX'])assert.deepEqual(rendered[key],motion[key]);
+    f.tick(120);
+    assert.equal(f.renders.at(-1)[0].lookX,f.snapshot().pose.lookX);
+    f.state({followEnabled:false});
+    f.move(f.rect.x+1,{clientY:f.rect.y+90,buttons:0,pointerType:'mouse'});
+    f.tick(12);
+    assert.equal(f.renders.at(-1)[0].lookX,f.snapshot().pose.lookX);
+  } finally {f.runtime.destroy();}
+});
+
+test('system activity reaches the real director even without pet pointer events',()=>{
+  const f=fixture();
+  try {
+    f.idleSample(0); f.runtime.start();
+    for(let second=0;second<120;second++){
+      f.idleSample(0); f.tick(10,100);
+      assert.equal(f.snapshot().referenceMotion.drowsyEligible,false);
+      assert.notEqual(f.snapshot().referenceMotion.active,'doze');
+    }
+    f.idleSample(120);
+    assert.equal(f.snapshot().referenceMotion.drowsyEligible,true);
+    f.idleSample(0);
+    assert.equal(f.snapshot().referenceMotion.drowsyEligible,false);
+  } finally {f.runtime.destroy();}
+  assert.equal(f.systemIdle.size,0);
+});
 
 // First vertical slice: an immediately rendered, stoppable single loop.
 test('one director and one RAF survive start, stop, restart and stale callbacks, including initially hidden documents', () => {

@@ -2,14 +2,17 @@
 const {validFeedback}=require('../feedback-window.cjs');
 // One display ID allocator for renderer reactions and main-process reminders.
 // Clearing a touch cannot clear a game reminder owned by a different source.
-function createPresentation({window:surface,clock=globalThis}){
+function createPresentation({window:surface,clock=globalThis,onReminderChange=()=>{}}){
   const now=typeof clock.now==='function'?()=>clock.now():()=>performance.now();
   let sequence=0,rendererHigh=0,normal=null,urgent=null,timer=null,enabled=true,dead=false;
+  let reportedUrgent=false;
+  function reportUrgent(){const active=enabled&&!!urgent&&urgent.until>now();if(active!==reportedUrgent){reportedUrgent=active;onReminderChange(active);}}
   function disarm(){if(timer!==null)clock.clearTimeout(timer);timer=null;}
   function render(){
     disarm();if(dead)return;
     if(urgent&&urgent.until<=now())urgent=null;
     if(normal&&normal.until<=now())normal=null;
+    reportUrgent();
     const next=urgent||normal;
     if(!enabled||!next){surface.clear();return;}
     surface.set({...next.value,id:++sequence,durationMs:Math.max(3400,Math.ceil(next.until-now()))});
@@ -35,7 +38,7 @@ function createPresentation({window:surface,clock=globalThis}){
     clearNormal(){normal=null;if(!urgent)render();},
     clearReminders(){urgent=null;render();},
     retainOnBlur:()=>!!urgent&&urgent.until>now(),
-    setEnabled(v){enabled=v===true;if(!enabled){normal=null;urgent=null;disarm();}surface.setEnabled(enabled);if(!enabled)surface.clear();},
+    setEnabled(v){enabled=v===true;if(!enabled){normal=null;urgent=null;disarm();}reportUrgent();surface.setEnabled(enabled);if(!enabled)surface.clear();},
     destroy(){dead=true;disarm();normal=null;urgent=null;},
   };
 }
